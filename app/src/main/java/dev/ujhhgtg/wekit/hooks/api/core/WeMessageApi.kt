@@ -664,7 +664,7 @@ object WeMessageApi : ApiHookItem(), IResolvesDex {
     private val ctorNetSceneUploadMsgImg by dexConstructor()
 
     fun sendImageByMd5(toUser: String, md5: String, appMsgAppId: String? = null) {
-        if ((HostInfo.versionCode >= WeChatVersions.MM_8_0_67 && !HostInfo.isHostGooglePlay) ||
+        if (HostInfo.versionCode >= WeChatVersions.MM_8_0_67 && !HostInfo.isHostGooglePlay ||
             HostInfo.versionCode >= WeChatVersions.MM_8_0_66_PLAY && HostInfo.isHostGooglePlay
         ) {
             val sendImageMethod = methodImgUploadFeatureServiceSendImage.method

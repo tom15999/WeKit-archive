@@ -1,6 +1,6 @@
 package dev.ujhhgtg.wekit.utils.crash
 
-import dev.ujhhgtg.comptime.nameOf
+import dev.ujhhgtg.comptime.This
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.WeLogger.exitProcess
@@ -9,7 +9,7 @@ import dev.ujhhgtg.wekit.utils.polyfills.getThreadId
 
 object JavaCrashHandler : Thread.UncaughtExceptionHandler {
 
-    private val TAG = nameOf(JavaCrashHandler::class)
+    private val TAG = This.Class.simpleName
 
     private val defaultHandler: Thread.UncaughtExceptionHandler? =
         Thread.getDefaultUncaughtExceptionHandler()

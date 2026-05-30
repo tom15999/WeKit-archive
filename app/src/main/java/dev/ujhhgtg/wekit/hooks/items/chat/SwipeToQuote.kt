@@ -1,6 +1,5 @@
 package dev.ujhhgtg.wekit.hooks.items.chat
 
-import android.content.Context
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
@@ -16,6 +15,7 @@ import dev.ujhhgtg.wekit.hooks.api.core.WeServiceApi
 import dev.ujhhgtg.wekit.hooks.api.ui.WeChatMessageViewApi
 import dev.ujhhgtg.wekit.hooks.core.HookItem
 import dev.ujhhgtg.wekit.hooks.core.SwitchHookItem
+import dev.ujhhgtg.wekit.ui.utils.dpToPx
 import dev.ujhhgtg.wekit.utils.reflection.asResolver
 import dev.ujhhgtg.wekit.utils.reflection.resolve
 import org.luckypray.dexkit.DexKitBridge
@@ -137,7 +137,7 @@ object SwipeToQuote : SwitchHookItem(), IResolvesDex,
         val chattingContext = WeChatMessageViewApi.getChattingContextFromParam(param)
         states[view] = SwipeState(
             chattingContext = chattingContext,
-            triggerThreshold = dpToPx(view.context, 60).toFloat(),
+            triggerThreshold = 60.dpToPx(view.context).toFloat(),
         )
     }
 
@@ -167,9 +167,6 @@ object SwipeToQuote : SwitchHookItem(), IResolvesDex,
         if (quoteMethod.parameterCount == 1) quoteMethod.invoke(chatFooter, msgInfo)
         else quoteMethod.invoke(chatFooter, msgInfo, null)
     }
-
-    private fun dpToPx(context: Context, dp: Int) =
-        (dp * context.resources.displayMetrics.density).toInt()
 
     private val classChattingUiFootComponent by dexClass()
     private val methodGetMsgInfo by dexMethod()

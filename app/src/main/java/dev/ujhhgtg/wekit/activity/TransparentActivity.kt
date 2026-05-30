@@ -12,7 +12,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 import dev.ujhhgtg.wekit.utils.android.isDarkMode
 
-class StubFragmentActivity : FragmentActivity() {
+class TransparentActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,9 +38,7 @@ class StubFragmentActivity : FragmentActivity() {
         fun launch(context: Context, action: FragmentActivity.() -> Unit) {
             pendingAction = action
             context.startActivity(
-                Intent(context, StubFragmentActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
+                Intent(context, TransparentActivity::class.java)
             )
         }
     }

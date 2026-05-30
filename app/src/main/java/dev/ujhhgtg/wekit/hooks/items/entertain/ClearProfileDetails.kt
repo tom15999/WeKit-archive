@@ -19,7 +19,7 @@ object ClearProfileDetails : ClickableHookItem() {
             AlertDialogContent(
                 title = { Text("清空资料信息") },
                 text = { Text("确定清空吗？清空后你仍然可以重新选择资料信息") },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+                dismissButton = { TextButton(onDismiss) { Text("取消") } },
                 confirmButton = {
                     Button(onClick = {
                         val payload =
@@ -34,7 +34,7 @@ object ClearProfileDetails : ClickableHookItem() {
                                 WeLogger.i("WeProfileCleaner", "成功，回包: $json")
                                 showComposeDialog(context) {
                                     AlertDialogContent(
-                                        title = { Text("发送成功, 响应结果:") },
+                                        title = { Text("发送成功") },
                                         text = { Text(json) },
                                         confirmButton = {
                                             TextButton(onClick = onDismiss) { Text("关闭") }
@@ -46,7 +46,7 @@ object ClearProfileDetails : ClickableHookItem() {
                             onFailure { type, code, msg ->
                                 showComposeDialog(context) {
                                     AlertDialogContent(
-                                        title = { Text("发送失败, 响应结果:") },
+                                        title = { Text("发送失败") },
                                         text = { Text("type: $type, code: $code, msg: $msg") },
                                         confirmButton = {
                                             TextButton(onClick = onDismiss) { Text("关闭") }

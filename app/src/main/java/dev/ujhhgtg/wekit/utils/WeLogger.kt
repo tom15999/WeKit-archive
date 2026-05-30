@@ -4,7 +4,6 @@ import android.util.Log
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.createDirectoriesNoThrow
-import java.io.BufferedWriter
 import java.io.FileWriter
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -27,12 +26,12 @@ object WeLogger {
 
     private val lock = ReentrantLock()
 
-    private var writer: BufferedWriter? = null
+    private var writer: FileWriter? = null
     private var currentLogDate: LocalDate? = null
 
     // ========== File Logging Internals ==========
 
-    private fun getOrRotateWriter(): BufferedWriter? {
+    private fun getOrRotateWriter(): FileWriter? {
         val today = LocalDate.now()
 
         if (writer != null && currentLogDate == today) return writer
@@ -46,7 +45,7 @@ object WeLogger {
         }.getOrNull() ?: return null
 
         return runCatching {
-            BufferedWriter(FileWriter(logPath.toFile(), true)).also {
+            FileWriter(logPath.toFile(), true).also {
                 writer = it
                 currentLogDate = today
             }
@@ -65,7 +64,8 @@ object WeLogger {
                         append(Log.getStackTraceString(throwable))
                     }
                 })
-                w.newLine()
+                w.write("\n")
+                w.flush() // Force immediate write to the filesystem descriptor
             }
         }
     }

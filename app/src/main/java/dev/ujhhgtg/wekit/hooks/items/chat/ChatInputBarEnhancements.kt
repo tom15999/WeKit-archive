@@ -30,11 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Alternate_email
-import com.composables.icons.materialsymbols.outlined.Bomb
 import com.composables.icons.materialsymbols.outlined.Send_time_extension
 import com.composables.icons.materialsymbols.outlined.Voice_chat
 import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
-import dev.ujhhgtg.wekit.activity.StubFragmentActivity
+import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.hooks.api.core.WeApi
 import dev.ujhhgtg.wekit.hooks.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.hooks.api.core.WeMessageApi
@@ -188,12 +187,13 @@ object ChatInputBarEnhancements : SwitchHookItem() {
                                                 }
                                             }
 
-                                            ActionItem(
-                                                icon = MaterialSymbols.Outlined.Bomb,
-                                                label = "发送闪退贴纸表情",
-                                            ) {
-
-                                            }
+                                            // TODO
+//                                            ActionItem(
+//                                                icon = MaterialSymbols.Outlined.Bomb,
+//                                                label = "发送闪退贴纸表情",
+//                                            ) {
+//
+//                                            }
                                         }
                                     })
                             }
@@ -215,7 +215,7 @@ object ChatInputBarEnhancements : SwitchHookItem() {
 }
 
 private fun selectAndSendVoice(context: Context, currentConv: String) {
-    StubFragmentActivity.launch(context) {
+    TransparentActivity.launch(context) {
         val importLauncher = registerForActivityResult(
             ActivityResultContracts.OpenDocument()
         ) { uri ->

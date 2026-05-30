@@ -29,7 +29,7 @@ import com.tencent.mm.ui.base.CustomViewPager
 import com.tencent.mm.ui.conversation.ConversationListView
 import com.tencent.mm.ui.conversation.MainUI
 import dev.ujhhgtg.comptime.This
-import dev.ujhhgtg.wekit.activity.StubFragmentActivity
+import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.dexkit.abc.IResolvesDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.hooks.core.ClickableHookItem
@@ -349,7 +349,7 @@ object ApplyGlobalBackground : ClickableHookItem(), IResolvesDex {
     }
 
     override fun onClick(context: Context) {
-        StubFragmentActivity.launch(HostInfo.application) {
+        TransparentActivity.launch(context) {
             val selMediaLauncher = registerForActivityResult(
                 ActivityResultContracts.PickVisualMedia()
             ) { uri ->

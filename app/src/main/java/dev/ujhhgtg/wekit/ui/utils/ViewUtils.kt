@@ -1,10 +1,10 @@
 package dev.ujhhgtg.wekit.ui.utils
 
 import android.app.Activity
+import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ListAdapter
-import dev.ujhhgtg.wekit.utils.HostInfo
 
 fun <T : View> View.findViewByClassName(className: String): T? {
     if (javaClass.name == className || javaClass.simpleName == className) {
@@ -103,5 +103,5 @@ inline val Activity.rootView: ViewGroup
     get() = findViewById(android.R.id.content)
 
 @Suppress("NOTHING_TO_INLINE")
-inline fun Int.dpToPx(): Int =
-    (this * HostInfo.application.resources.displayMetrics.density).toInt()
+inline fun Int.dpToPx(context: Context): Int =
+    (this * context.resources.displayMetrics.density).toInt()

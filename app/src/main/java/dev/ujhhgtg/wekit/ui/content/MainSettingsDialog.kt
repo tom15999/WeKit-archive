@@ -59,7 +59,7 @@ import com.mikepenz.aboutlibraries.entity.Library
 import com.tencent.mm.ui.LauncherUI
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.aboutlibraries.AboutLibrariesProvider
-import dev.ujhhgtg.wekit.activity.StubFragmentActivity
+import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.constants.PreferenceKeys
 import dev.ujhhgtg.wekit.hooks.items.easter_egg.AprilFools
@@ -177,7 +177,7 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
             summary = "将模块配置导出为 JSON",
             icon = MaterialSymbols.Outlined.Upload,
             onClick = {
-                StubFragmentActivity.launch(HostInfo.application) {
+                TransparentActivity.launch(context) {
                     val exportLauncher = registerForActivityResult(
                         ActivityResultContracts.CreateDocument("application/json")
                     ) { uri ->
@@ -233,7 +233,7 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
             summary = "从 JSON 导入模块配置; JSON 中的配置将会与现有配置合并, 覆盖所有已存在的配置",
             icon = MaterialSymbols.Outlined.Download,
             onClick = {
-                StubFragmentActivity.launch(HostInfo.application) {
+                TransparentActivity.launch(context) {
                     val importLauncher = registerForActivityResult(
                         ActivityResultContracts.OpenDocument()
                     ) { uri ->
