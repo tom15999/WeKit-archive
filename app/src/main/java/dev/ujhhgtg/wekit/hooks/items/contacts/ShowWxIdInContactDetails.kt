@@ -25,7 +25,7 @@ object ShowWxIdInContactDetails : SwitchHookItem(), IContactInfoProvider {
         return ContactInfoItem(
             key = "$PREF_KEY$SEPARATOR$wxId",
             title = "微信 ID: ${wxId ?: "获取失败"}",
-            position = 0
+            position = 1
         )
     }
 
