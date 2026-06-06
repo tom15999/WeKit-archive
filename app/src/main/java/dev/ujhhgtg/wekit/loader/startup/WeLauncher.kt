@@ -24,7 +24,7 @@ object WeLauncher {
 
         ParcelableFixer.init()
 
-        DexCacheManager.init(HostInfo.versionName)
+        DexCacheManager.init(HostInfo.versionCode.toString())
 
         if (TargetProcesses.isInMain) {
             val appContext = context.applicationContext ?: context

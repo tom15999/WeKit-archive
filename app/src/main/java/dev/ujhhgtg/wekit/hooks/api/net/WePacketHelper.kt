@@ -267,7 +267,7 @@ object WePacketHelper : ApiHookItem(), IResolvesDex {
                 val reqRespName = callbackMethod.paramTypes[3].name
                 classReqResp.setDescriptor(reqRespName)
 
-                WeLogger.i(TAG, "动态识别 ReqResp 基类: $reqRespName")
+                WeLogger.i(TAG, "found ReqResp base class: $reqRespName")
 
                 val dispatchMethod = dexKit.findMethod {
                     matcher {

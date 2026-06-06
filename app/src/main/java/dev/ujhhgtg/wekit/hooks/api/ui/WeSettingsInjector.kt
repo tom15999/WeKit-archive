@@ -73,6 +73,7 @@ object WeSettingsInjector : ApiHookItem(), IResolvesDex, WeHomeScreenPopupMenuAp
     private val classSettingItemClassesProvider by dexClass()
     private val classBaseSettingItem by dexClass()
     private val classSettingLocation by dexClass()
+    private val methodSettingGroupAccountInfoGetStringId by dexMethod()
     private val methodSettingGroupAccountInfoReturns1 by dexMethod()
 
     private val TAG = This.Class.simpleName
@@ -183,6 +184,14 @@ object WeSettingsInjector : ApiHookItem(), IResolvesDex, WeHomeScreenPopupMenuAp
             }
         }
 
+        methodSettingGroupAccountInfoGetStringId.find(dexKit, allowFailure = true) {
+            matcher {
+                declaredClass = "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupAccountInfo"
+                usingEqStrings("SettingGroup_Main_AccountInfo")
+                returnType = "java.lang.String"
+            }
+        }
+
         methodSettingGroupAccountInfoReturns1.find(dexKit, allowFailure = true) {
             matcher {
                 declaredClass = "com.tencent.mm.plugin.setting.ui.setting_new.settings.SettingGroupAccountInfo"
@@ -289,20 +298,18 @@ object WeSettingsInjector : ApiHookItem(), IResolvesDex, WeHomeScreenPopupMenuAp
             val mGetGroupItemClass = first { m -> m.returnType == Class::class.java }.name
             val mReturns1 = methodSettingGroupAccountInfoReturns1.method.name
             val mOnClick = first { m -> m.parameterCount == 3 }.name
-            val mGetStringId = last { m -> m.returnType == String::class.java }.name
+            val mGetStringId = methodSettingGroupAccountInfoGetStringId.method.name
             val mGetSettingLocation =
                 last { m -> m.returnType == classSettingLocation.clazz }.name
             val mGetNameResId =
-                last { m ->
-                    m.returnType == Int::class.javaPrimitiveType &&
-                            m.name != methodSettingGroupAccountInfoReturns1.method.name
+                last { m -> m.returnType == int &&
+                    m.name != methodSettingGroupAccountInfoReturns1.method.name
                 }.name
 
             // non-play 8.0.69: C6, K6, Q6, w6, x6, z6
             // non-play 8.0.70: k7, r7, w7, g7, h7, j7
             // non-play 8.0.71: p7, w7, B7, l7, m7, o7
-            // play 8.0.68: E6, M6, T6, z6, B6, D6
-            // play 8.0.69: C6, K6, Q6, w6, x6, z6
+            // play 8.0.69 (3022): E6, N6, U6, A6, B6, D6
             WeLogger.d(
                 TAG,
                 "resolved all method names: $mGetGroupItemClass, $mReturns1, $mOnClick, $mGetStringId, $mGetSettingLocation, $mGetNameResId"
