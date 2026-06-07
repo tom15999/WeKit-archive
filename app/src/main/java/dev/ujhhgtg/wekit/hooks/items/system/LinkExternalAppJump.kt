@@ -94,7 +94,7 @@ object LinkExternalAppJump : SwitchHookItem(),
 
         val component = intent.component ?: return
         val shortClassName = component.shortClassName ?: return
-        if (!shortClassName.contains("MMWebViewUI")) return
+        if (!shortClassName.contains("WebViewUI")) return
 
         val rawUrl = intent.getStringExtra("rawUrl") ?: return
         if (!rawUrl.startsWith("http")) return

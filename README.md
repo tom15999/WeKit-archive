@@ -209,11 +209,11 @@ adb shell cmd package compile -m speed-profile dev.ujhhgtg.wekit
 
 ## 解密微信数据库
 
-1. 启动微信
+1. 开启「模块设置->调试->详细日志」并重启微信
 
 2. 在日志中寻找: `WeDatabaseApi: openDatabase() called with: name=/data/user/0/com.tencent.mm/MicroMsg/xxxxxxxxx/EnMicroMsg.db, password=xxxxxxx, cipherSpec=0,false,0,4000,1024`
 
-3. 输入:
+3. 一行一行输入, 不要连续输入多行:
 
     ```bash
     sqlcipher ./EnMicroMsg.db
@@ -221,7 +221,6 @@ adb shell cmd package compile -m speed-profile dev.ujhhgtg.wekit
     PRAGMA key = 'xxxxxxx';
     PRAGMA cipher_compatibility = 1;
 
-    # 不要连续输入多行命令, 请一行一行输入
     ATTACH DATABASE 'decrypted_wechat.db' AS decrypted KEY '';
 
     SELECT sqlcipher_export('decrypted');

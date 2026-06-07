@@ -16,18 +16,18 @@ class CategorySettingsScreen(
 
     override fun initPreferences() {
         val targetItems = HookItemsProvider.ALL_HOOK_ITEMS.filter { item ->
-            item.path.startsWith("$categoryName/")
+            categoryName in item.categories
         }
 
         if (targetItems.isEmpty()) return
 
         targetItems.forEach { item ->
-            val displayName = item.path.substringAfterLast("/")
+            val name = item.name
             val desc = item.description
 
             when (item) {
-                is ClickableHookItem -> addClickableItem(item, displayName, desc)
-                is SwitchHookItem -> addSwitchItem(item, displayName, desc)
+                is ClickableHookItem -> addClickableItem(item, name, desc)
+                is SwitchHookItem -> addSwitchItem(item, name, desc)
             }
         }
     }
@@ -37,7 +37,7 @@ class CategorySettingsScreen(
         title: String,
         summary: String,
     ) {
-        val configKey = item.path
+        val configKey = item.name
         val initialChecked = WePrefs.getBoolOrFalse(configKey)
 
         addHookSwitch(
@@ -66,7 +66,7 @@ class CategorySettingsScreen(
         title: String,
         summary: String,
     ) {
-        val configKey = item.path
+        val configKey = item.name
         val initialChecked = WePrefs.getBoolOrFalse(configKey)
 
         addHookClickable(
@@ -91,7 +91,7 @@ class CategorySettingsScreen(
             onClick = {
                 runCatching {
                     item.onClick(it)
-                }.onFailure { WeLogger.e(nameOf(BaseHookItem::class), "failed to execute onClick of ${item.path}") }
+                }.onFailure { WeLogger.e(nameOf(BaseHookItem::class), "failed to execute onClick of ${item.name}") }
             },
         )
     }

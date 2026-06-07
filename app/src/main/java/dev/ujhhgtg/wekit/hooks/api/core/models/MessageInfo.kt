@@ -121,12 +121,22 @@ class MessageInfo(val instance: Any) {
         private val json = XmlJsonParser.toJsonObject(jsonString.cleanupXml())
 
         // 'transcationid' is WeChat's typo
-        val transactionId by lazy { json.getByPath("msg.wcpayinfo.transcationid")!!.asString }
-        val transferId by lazy { json.getByPath("msg.wcpayinfo.transferid")!!.asString }
+        // We extract it directly from the raw XML to prevent floating-point precision loss.
+        val transactionId by lazy {
+            extractXmlTag(jsonString, "transcationid")
+                ?: json.getByPath("msg.wcpayinfo.transcationid")?.asString
+                ?: ""
+        }
 
-        // FIXME: payerUsername is empty
+        val transferId by lazy {
+            extractXmlTag(jsonString, "transferid")
+                ?: json.getByPath("msg.wcpayinfo.transferid")?.asString
+                ?: ""
+        }
+
         val payerUsername by lazy { json.getByPath("msg.wcpayinfo.payer_username")!!.asString }
         val invalidTime by lazy { json.getByPath("msg.wcpayinfo.invalidtime")!!.asString.toInt() }
+        val feedesc by lazy { json.getByPath("msg.wcpayinfo.feedesc")!!.asString }
     }
 
     companion object {
@@ -138,6 +148,23 @@ class MessageInfo(val instance: Any) {
                     superclass()
                 }
                 .get()!! as T
+        }
+
+        /**
+         * Safely extracts tag content directly from raw XML strings.
+         * Bypasses JSON type coercion overhead and prevents 32-digit string truncation.
+         */
+        private fun extractXmlTag(xml: String, tag: String): String? {
+            val startTag = "<$tag>"
+            val endTag = "</$tag>"
+            if (!xml.contains(startTag) || !xml.contains(endTag)) return null
+
+            val content = xml.substringAfter(startTag).substringBefore(endTag)
+            return if (content.startsWith("<![CDATA[")) {
+                content.substringAfter("<![CDATA[").substringBefore("]]>")
+            } else {
+                content
+            }.trim()
         }
 
         private fun String.cleanupXml(): String {

@@ -1,6 +1,5 @@
 package dev.ujhhgtg.wekit.ui.content
 
-import android.app.Dialog
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
@@ -76,7 +75,6 @@ fun DexResolver(
     context: Context,
     outdatedItems: List<IResolvesDex>,
     scope: CoroutineScope,
-    dialog: Dialog,
     dismiss: () -> Unit
 ) {
     var phase by remember { mutableStateOf<DialogPhase>(DialogPhase.Idle) }
@@ -123,7 +121,6 @@ fun DexResolver(
 
     fun startScanning() {
         phase = DialogPhase.Scanning
-        dialog.setCancelable(false)
         scope.launch {
             try {
                 val progressChannel = Channel<ScanProgress>(Channel.UNLIMITED)
@@ -152,7 +149,6 @@ fun DexResolver(
 
                 val failed = results.filterIsInstance<ScanResult.Failed>()
                 phase = DialogPhase.Done(failed)
-                dialog.setCancelable(true)
             } catch (e: Exception) {
                 WeLogger.e(TAG, "scanning failed", e)
                 phase = DialogPhase.Error("扫描过程中发生未知错误: ${e.message}")

@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
 
 object HookItemsLoader {
@@ -127,15 +128,14 @@ object HookItemsLoader {
                 return@launch
             }
 
-            delay(1_500.milliseconds)
+            delay(1.seconds)
 
             withContext(Dispatchers.Main) {
-                showComposeDialog(activity) {
+                showComposeDialog(activity, directlyDismissable = false) {
                     DexResolver(
                         activity,
                         brokenItems,
                         MainScope(),
-                        dialog,
                         onDismiss
                     )
                 }

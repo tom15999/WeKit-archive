@@ -16,7 +16,8 @@ import kotlin.reflect.KClass
 
 abstract class BaseHookItem {
 
-    var path: String = ""
+    var name: String = ""
+    var categories: List<String> = emptyList()
 
     var description: String = ""
 
@@ -174,7 +175,7 @@ abstract class BaseHookItem {
     internal inline fun executeHookAction(param: XC_MethodHook.MethodHookParam, action: HookAction) {
         runCatching {
             action(param)
-        }.onFailure { e -> WeLogger.e("executeHookAction", "failed to execute hook of $path", e) }
+        }.onFailure { e -> WeLogger.e("executeHookAction", "failed to execute hook of $name", e) }
     }
 
     companion object {

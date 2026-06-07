@@ -6,6 +6,7 @@ import com.tencent.wcdb.DatabaseErrorHandler
 import com.tencent.wcdb.database.SQLiteCipherSpec
 import com.tencent.wcdb.database.SQLiteDatabase
 import dev.ujhhgtg.comptime.This
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolvesDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
@@ -112,6 +113,25 @@ object WeDatabaseApi : ApiHookItem(), IResolvesDex {
                 AND (r.type & 8) = 0
                 AND (r.type & 32) = 0
                 AND r.username NOT LIKE '%chatroom'
+        """.trimIndent()
+
+        /** 查询单个好友（包含微信内部id或自定义微信号alias匹配） */
+        fun friend(wxid: String) = """
+        SELECT $CONTACT_FIELDS, r.type
+        FROM rcontact r
+        $LEFT_JOIN_IMG_FLAG
+        WHERE
+            (r.username = '$wxid' OR r.alias = '$wxid')
+            AND (
+                r.encryptUsername != '' -- 是真好友
+                OR
+                r.username = (SELECT value FROM userinfo WHERE id = 2) -- 是我自己
+            )
+            AND r.verifyFlag = 0
+            AND (r.type & 1) != 0
+            AND (r.type & 8) = 0
+            AND (r.type & 32) = 0
+            AND r.username NOT LIKE '%chatroom'
         """.trimIndent()
 
         // =========================================
@@ -221,19 +241,21 @@ object WeDatabaseApi : ApiHookItem(), IResolvesDex {
             initializeDatabase(storageObj)
         }
 
-        SQLiteDatabase::class.asResolver().firstMethod {
-            name = "openDatabase"
-            parameters(BString, ByteArray::class, SQLiteCipherSpec::class, SQLiteDatabase.CursorFactory::class, int, DatabaseErrorHandler::class, int)
-        }.hookBefore {
-            val cipherSpec = args[2] as SQLiteCipherSpec?
-            WeLogger.d(
-                TAG,
-                "openDatabase() called with: name=${args[0] as String?}, password=${String(args[1] as? ByteArray? ?: return@hookBefore)}, cipherSpec=${
-                    cipherSpec.run {
-                        "${this?.hmacAlgorithm},${this?.hmacEnabled},${this?.kdfAlgorithm},${this?.kdfIteration},${this?.pageSize}"
-                    }
-                }"
-            )
+        if (Preferences.verboseLog) {
+            SQLiteDatabase::class.asResolver().firstMethod {
+                name = "openDatabase"
+                parameters(BString, ByteArray::class, SQLiteCipherSpec::class, SQLiteDatabase.CursorFactory::class, int, DatabaseErrorHandler::class, int)
+            }.hookBefore {
+                val cipherSpec = args[2] as SQLiteCipherSpec?
+                WeLogger.d(
+                    TAG,
+                    "openDatabase() called with: name=${args[0] as String?}, password=${String(args[1] as? ByteArray? ?: return@hookBefore)}, cipherSpec=${
+                        cipherSpec.run {
+                            "${this?.hmacAlgorithm},${this?.hmacEnabled},${this?.kdfAlgorithm},${this?.kdfIteration},${this?.pageSize}"
+                        }
+                    }"
+                )
+            }
         }
     }
 
@@ -304,6 +326,26 @@ object WeDatabaseApi : ApiHookItem(), IResolvesDex {
      */
     fun getFriends(): List<WeContact> {
         return mapToContacts(executeQuery(SqlStatements.FRIENDS))
+    }
+
+    /**
+     * 获取单条【好友】
+     * @param wxId 微信原始 ID (wxid_xxx) 或 用户自定义微信号 (alias)
+     * @return 匹配到的 WeContact 对象，若未找到或非好友则返回 null
+     */
+    fun getFriend(wxId: String): WeContact? {
+        if (wxId.isEmpty()) return null
+        try {
+            val escapedWxid = wxId.replace("'", "''")
+            val result = executeQuery(SqlStatements.friend(escapedWxid))
+
+            if (result.isEmpty()) return null
+
+            return mapToContacts(result).firstOrNull()
+        } catch (e: Exception) {
+            WeLogger.e(TAG, "failed to get friend details; wxid=$wxId", e)
+            return null
+        }
     }
 
     fun getDisplayName(convId: String): String {

@@ -1,4 +1,10 @@
 package com.tencent.mm.plugin.webview.ui.tools;
 
-public class WebViewUI {
+import android.app.Activity;
+
+public class WebViewUI extends Activity {
+
+    public WebViewUI() {
+
+    }
 }

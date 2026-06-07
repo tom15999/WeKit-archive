@@ -78,8 +78,7 @@ class HookItemsScanner(
                 // Then alphabetically by the last path segment (item name)
                 { symbol ->
                     val hookItem = symbol.getAnnotationsByType(HookItem::class).firstOrNull()
-                    val path = hookItem?.path.orEmpty()
-                    path.substringAfterLast("/", path)
+                    hookItem?.name.orEmpty()
                 }
             )
         )
@@ -96,12 +95,13 @@ class HookItemsScanner(
                 val hookItem = symbol.getAnnotationsByType(HookItem::class).first()
                 val typeName = symbol.toClassName()
 
-                // Inline apply{} so path/description are set on construction,
+                // Inline apply {} so path/description are set on construction,
                 // making the generated list a clean one-liner per entry.
                 addStatement(
-                    "%T.apply·{ path·=·%S; description·=·%S },",
+                    "%T.apply·{ name·=·%S; categories·=·listOf(%L); description·=·%S },",
                     typeName,
-                    hookItem.path,
+                    hookItem.name,
+                    hookItem.categories.joinToString(", ") { "\"$it\"" },
                     hookItem.description,
                 )
             }

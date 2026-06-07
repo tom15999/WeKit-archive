@@ -5,6 +5,7 @@ import dev.ujhhgtg.comptime.This
 import dev.ujhhgtg.wekit.dexkit.abc.IResolvesDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexConstructor
 import dev.ujhhgtg.wekit.hooks.api.core.WeApi
+import dev.ujhhgtg.wekit.hooks.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.hooks.api.core.WeDatabaseListenerApi
 import dev.ujhhgtg.wekit.hooks.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.hooks.api.core.models.MessageInfo
@@ -13,6 +14,7 @@ import dev.ujhhgtg.wekit.hooks.api.net.WeNetSceneApi
 import dev.ujhhgtg.wekit.hooks.core.HookItem
 import dev.ujhhgtg.wekit.hooks.core.SwitchHookItem
 import dev.ujhhgtg.wekit.utils.WeLogger
+import dev.ujhhgtg.wekit.utils.android.showToast
 import org.luckypray.dexkit.DexKitBridge
 
 @HookItem(path = "红包与支付/自动接收转账", description = "监听消息并自动接收转账")
@@ -68,8 +70,6 @@ object AutoAcceptTransfers : SwitchHookItem(), IResolvesDex, WeDatabaseListenerA
         val content = values.getAsString("content") ?: return
         val receiver = parseReceiverFromXml(content)
 
-        WeLogger.d(TAG, content)
-
         if (receiver != WeApi.selfWxId) {
             WeLogger.w(TAG, "receiver is not self, ignoring")
             return
@@ -100,8 +100,6 @@ object AutoAcceptTransfers : SwitchHookItem(), IResolvesDex, WeDatabaseListenerA
             val transferId = transferMsg.transferId
             val invalidTime = transferMsg.invalidTime
 
-            WeLogger.d(TAG, "$transactionId, $transferId, $payerUsername, $invalidTime")
-
             val ctor = ctorNetSceneTransferOperation.constructor
             return@run when (ctor.parameterCount) {
                 10 -> ctor.newInstance(transactionId, transferId, 0, "confirm", payerUsername, invalidTime, "", null, 1, null)
@@ -114,6 +112,9 @@ object AutoAcceptTransfers : SwitchHookItem(), IResolvesDex, WeDatabaseListenerA
 
         WeNetSceneApi.addNetSceneToQueue(netScene)
         WeLogger.i(TAG, "constructed net scene and added to queue")
+
+        val displayName = WeDatabaseApi.getDisplayName(payerUsername)
+        showToast("收到「${displayName}」的转账 ${transferMsg.feedesc}")
     }
 
     private val ctorNetSceneTransferOperation by dexConstructor()
