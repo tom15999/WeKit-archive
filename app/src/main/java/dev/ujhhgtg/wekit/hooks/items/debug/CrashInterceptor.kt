@@ -1,7 +1,7 @@
 package dev.ujhhgtg.wekit.hooks.items.debug
 
 import android.app.Activity
-import dev.ujhhgtg.comptime.nameOf
+import dev.ujhhgtg.comptime.This
 import dev.ujhhgtg.wekit.hooks.core.HookItem
 import dev.ujhhgtg.wekit.hooks.core.SwitchHookItem
 import dev.ujhhgtg.wekit.utils.HostInfo
@@ -16,7 +16,7 @@ import dev.ujhhgtg.wekit.utils.crash.JavaCrashHandler
 )
 object CrashInterceptor : SwitchHookItem() {
 
-    private val TAG = nameOf(CrashInterceptor)
+    private val TAG = This.Class.simpleName
 
     override fun onEnable() {
         JavaCrashHandler.install()

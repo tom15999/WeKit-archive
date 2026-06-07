@@ -1,7 +1,7 @@
 package dev.ujhhgtg.wekit.dexkit.cache
 
 import dev.ujhhgtg.comptime.This
-import dev.ujhhgtg.wekit.constants.PreferenceKeys
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolvesDex
 import dev.ujhhgtg.wekit.hooks.core.BaseHookItem
 import dev.ujhhgtg.wekit.preferences.WePrefs
@@ -41,7 +41,7 @@ object DexCacheManager {
         if (cachedVersion != currentHostVersion) {
             WeLogger.i(TAG, "host version changed: $cachedVersion -> $currentHostVersion, resetting all cache")
             clearAllCache()
-            WePrefs.putBool(PreferenceKeys.NO_DEX_RESOLVE, false)
+            Preferences.noDexResolve = false
             WeLogger.i(TAG, "disabling NO_DEX_RESOLVE due to host version change")
         }
 

@@ -57,7 +57,7 @@ import dev.ujhhgtg.wekit.hooks.api.core.WeConversationApi
 import dev.ujhhgtg.wekit.hooks.api.ui.WeMainActivityBeautifyApi
 import dev.ujhhgtg.wekit.hooks.core.HookItem
 import dev.ujhhgtg.wekit.hooks.core.SwitchHookItem
-import dev.ujhhgtg.wekit.ui.content.MainSettingsDialog
+import dev.ujhhgtg.wekit.ui.content.MainSettingsScreen
 import dev.ujhhgtg.wekit.ui.utils.AppTheme
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
 import dev.ujhhgtg.wekit.ui.utils.rootView
@@ -137,7 +137,7 @@ object AddMainScreenFab : SwitchHookItem() {
                     )
                 }),
                 "模块设置" to (MaterialSymbols.OutlinedFilled.Extension to {
-                    MainSettingsDialog(activity).show()
+                    MainSettingsScreen(activity).show(activity)
                 }),
                 "强制停止" to (MaterialSymbols.OutlinedFilled.Cancel to {
                     exitProcess(0)

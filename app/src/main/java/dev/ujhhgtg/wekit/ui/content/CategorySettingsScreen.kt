@@ -9,10 +9,10 @@ import dev.ujhhgtg.wekit.hooks.core.SwitchHookItem
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.utils.WeLogger
 
-class CategorySettingsDialog(
-    context: Context,
+class CategorySettingsScreen(
+    private val context: Context,
     private val categoryName: String,
-) : BasePrefsDialog(context, categoryName) {
+) : BasePrefsScreen(categoryName) {
 
     override fun initPreferences() {
         val targetItems = HookItemsProvider.ALL_HOOK_ITEMS.filter { item ->
@@ -90,7 +90,7 @@ class CategorySettingsDialog(
             },
             onClick = {
                 runCatching {
-                    item.onClick(context)
+                    item.onClick(it)
                 }.onFailure { WeLogger.e(nameOf(BaseHookItem::class), "failed to execute onClick of ${item.path}") }
             },
         )

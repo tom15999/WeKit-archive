@@ -1,8 +1,7 @@
 package dev.ujhhgtg.wekit.hooks.api.net
 
-import dev.ujhhgtg.wekit.constants.PreferenceKeys
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.hooks.api.net.abc.IWePacketInterceptor
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.utils.WeLogger
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -15,7 +14,7 @@ object WePacketManager {
     fun removeInterceptor(interceptor: IWePacketInterceptor) = listeners.remove(interceptor)
 
     internal fun handleRequestTamper(uri: String, cgiId: Int, reqBytes: ByteArray): ByteArray? {
-        if (WePrefs.getBoolOrFalse(PreferenceKeys.VERBOSE_LOG)) {
+        if (Preferences.verboseLog) {
             val data = WeProtoData.fromBytes(reqBytes)
             WeLogger.logChunkedI(
                 "WePacketInterceptor.Request",
@@ -31,7 +30,7 @@ object WePacketManager {
     }
 
     internal fun handleResponseTamper(uri: String, cgiId: Int, respBytes: ByteArray): ByteArray? {
-        if (WePrefs.getBoolOrFalse(PreferenceKeys.VERBOSE_LOG)) {
+        if (Preferences.verboseLog) {
             val data = WeProtoData.fromBytes(respBytes)
             WeLogger.logChunkedI(
                 "WePacketInterceptor.Response",

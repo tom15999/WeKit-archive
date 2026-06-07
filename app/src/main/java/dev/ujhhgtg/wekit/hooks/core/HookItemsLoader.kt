@@ -1,13 +1,10 @@
 package dev.ujhhgtg.wekit.hooks.core
 
-import android.content.pm.ApplicationInfo
 import com.tencent.mm.ui.LauncherUI
-import dev.ujhhgtg.comptime.nameOf
-import dev.ujhhgtg.wekit.constants.PreferenceKeys
-import dev.ujhhgtg.wekit.constants.PreferenceKeys.NO_DEX_RESOLVE
+import dev.ujhhgtg.comptime.This
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.dexkit.abc.IResolvesDex
 import dev.ujhhgtg.wekit.dexkit.cache.DexCacheManager
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.DexResolver
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.TargetProcesses
@@ -26,9 +23,9 @@ import kotlin.time.measureTime
 
 object HookItemsLoader {
 
-    private val TAG = nameOf(HookItemsLoader)
+    private val TAG = This.Class.simpleName
 
-    fun loadHookItems(appInfo: ApplicationInfo) {
+    fun loadHookItems() {
         val allHookItems = HookItemsProvider.ALL_HOOK_ITEMS
         val allDexItems = allHookItems.filterIsInstance<IResolvesDex>()
 
@@ -44,7 +41,7 @@ object HookItemsLoader {
         val allBrokenItems = (outdatedItems + cacheFailedItems).distinct()
 
         if (allBrokenItems.isNotEmpty())
-            handleBrokenItems(appInfo, allBrokenItems)
+            handleBrokenItems(allBrokenItems)
 
         val elapsed = measureTime {
             allHookItems.forEach { hookItem ->
@@ -62,7 +59,7 @@ object HookItemsLoader {
         }
         WeLogger.i(TAG, "enabling all hook items took $elapsed")
 
-        if (TargetProcesses.isInMain && WePrefs.getBoolOrFalse(PreferenceKeys.SHOW_TOAST_ON_STARTUP_COMPLETE)) {
+        if (TargetProcesses.isInMain && Preferences.showStartupToast) {
             showToast("WeKit 加载成功!")
         }
     }
@@ -109,11 +106,8 @@ object HookItemsLoader {
         return failedItems
     }
 
-    private fun handleBrokenItems(
-        appInfo: ApplicationInfo,
-        brokenItems: List<IResolvesDex>
-    ) {
-        if (WePrefs.getBoolOrFalse(NO_DEX_RESOLVE)) return
+    private fun handleBrokenItems(brokenItems: List<IResolvesDex>) {
+        if (Preferences.noDexResolve) return
         if (!TargetProcesses.isInMain) return
 
         WeLogger.i(TAG, "launching background coroutine to repair ${brokenItems.size} items")

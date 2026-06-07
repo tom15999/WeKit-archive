@@ -17,7 +17,7 @@ import dev.ujhhgtg.wekit.hooks.api.core.WeDatabaseApi
 import dev.ujhhgtg.wekit.hooks.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.hooks.core.ClickableHookItem
 import dev.ujhhgtg.wekit.hooks.core.HookItem
-import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -28,11 +28,7 @@ object AntiMessageRecall3 : ClickableHookItem(), IResolvesDex {
 
     private val TAG = This.Class.simpleName
 
-    private var RECALL_OUTGOING: Boolean
-        get() = WePrefs.getBoolOrFalse("recall_outgoing")
-        set(value) {
-            WePrefs.putBool("recall_outgoing", value)
-        }
+    private var recallOutgoing by prefOption("recall_outgoing", false)
 
     private val methodXmlParser by dexMethod()
 
@@ -106,18 +102,18 @@ object AntiMessageRecall3 : ClickableHookItem(), IResolvesDex {
             AlertDialogContent(
                 title = { Text("阻止消息撤回 3") },
                 text = {
-                    var recallOutgoing by remember { mutableStateOf(RECALL_OUTGOING) }
+                    var recallOutgoingInput by remember { mutableStateOf(recallOutgoing) }
 
                     ListItem(
                         headlineContent = { Text("防撤回自己的消息") },
                         supportingContent = { Text("是否对自己发出的消息也生效") },
                         trailingContent = {
-                            Switch(checked = recallOutgoing, onCheckedChange = {
-                                recallOutgoing = it
-                                RECALL_OUTGOING = it
-                            })
+                            Switch(checked = recallOutgoingInput, onCheckedChange = null)
                         },
-                        modifier = Modifier.clickable { recallOutgoing = !recallOutgoing }
+                        modifier = Modifier.clickable {
+                            recallOutgoingInput = !recallOutgoingInput
+                            recallOutgoing = recallOutgoingInput
+                        }
                     )
                 })
         }

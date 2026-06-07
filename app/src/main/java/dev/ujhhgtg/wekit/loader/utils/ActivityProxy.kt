@@ -21,12 +21,14 @@ import android.os.PersistableBundle
 import android.os.TestLooperManager
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.highcapable.kavaref.extension.hasClass
 import dev.ujhhgtg.comptime.This
 import dev.ujhhgtg.comptime.nameOf
 import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.Intent
+import dev.ujhhgtg.wekit.utils.reflection.ClassLoaders
 import dev.ujhhgtg.wekit.utils.reflection.makeAccessible
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
@@ -139,7 +141,7 @@ object ActivityProxy {
             val pmProxy = Proxy.newProxyInstance(
                 iPackageManagerInterface.classLoader,
                 arrayOf(iPackageManagerInterface),
-                PackageManagerInvocationHandler(packageManagerImpl)
+                PackageManagerInvocationHandler(packageManagerImpl!!)
             )
             sPackageManagerField.set(sCurrentActivityThread, pmProxy)
             mPmField.set(pm, pmProxy)
@@ -150,8 +152,9 @@ object ActivityProxy {
 
     object ActProxyMgr {
         const val ACTIVITY_PROXY_INTENT_TOKEN = "wekit_target_intent_token"
-        const val STUB_DEFAULT_ACTIVITY =
-            "${PackageNames.WECHAT}.plugin.facedetect.ui.FaceTransparentStubUI"
+        private const val CANDIDATE1 = "${PackageNames.WECHAT}.plugin.appbrand.ipc.AppBrandProxyTransparentUI"
+        private const val CANDIDATE2 = "${PackageNames.WECHAT}.plugin.facedetect.ui.FaceTransparentStubUI"
+        val STUB_DEFAULT_ACTIVITY = if (ClassLoaders.HOST.hasClass(CANDIDATE1)) { CANDIDATE1 } else { CANDIDATE2 }
 
         fun isModuleProxyActivity(className: String?): Boolean =
             className?.startsWith(PackageNames.THIS) == true
@@ -476,11 +479,7 @@ object ActivityProxy {
             base.acquireLooperManager(looper)
     }
 
-    class PackageManagerInvocationHandler(private val target: Any?) : InvocationHandler {
-        init {
-            requireNotNull(target) { "IPackageManager is null" }
-        }
-
+    class PackageManagerInvocationHandler(private val target: Any) : InvocationHandler {
         override fun invoke(proxy: Any, method: Method, args: Array<Any?>?): Any? {
             if (method.name == "getActivityInfo" && args != null) {
                 var component: ComponentName? = null

@@ -5,11 +5,10 @@ import android.content.ContentValues
 import com.highcapable.kavaref.extension.VariousClass
 import com.tencent.wcdb.database.SQLiteDatabase
 import dev.ujhhgtg.comptime.nameOf
-import dev.ujhhgtg.wekit.constants.PreferenceKeys
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.constants.WeChatVersions
 import dev.ujhhgtg.wekit.hooks.core.ApiHookItem
 import dev.ujhhgtg.wekit.hooks.core.HookItem
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.reflection.resolve
@@ -87,7 +86,7 @@ object WeDatabaseListenerApi : ApiHookItem() {
         args: Array<out Any?>,
         result: Any? = null
     ) {
-        if (!WePrefs.getBoolOrFalse(PreferenceKeys.VERBOSE_LOG)) return
+        if (!Preferences.verboseLog) return
 
         val argsInfo = formatArgs(args)
         val resultStr = if (result != null) ", result=$result" else ""

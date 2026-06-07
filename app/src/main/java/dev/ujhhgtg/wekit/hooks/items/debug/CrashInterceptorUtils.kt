@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.Process
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -111,13 +112,15 @@ object CrashInterceptorUtils {
                 AlertDialogContent(
                     title = { Text(titleDetail) },
                     text = {
-                        Text(
-                            displayInfo,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                        )
+                        SelectionContainer {
+                            Text(
+                                displayInfo,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                            )
+                        }
                     },
                     confirmButton = {
                         TextButton(onClick = {

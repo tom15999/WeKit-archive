@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -40,6 +42,7 @@ import com.composables.icons.materialsymbols.outlined.Contacts
 import com.composables.icons.materialsymbols.outlined.Delete_forever
 import com.composables.icons.materialsymbols.outlined.Download
 import com.composables.icons.materialsymbols.outlined.Frame_bug
+import com.composables.icons.materialsymbols.outlined.Fullscreen
 import com.composables.icons.materialsymbols.outlined.Imagesearch_roller
 import com.composables.icons.materialsymbols.outlined.Label
 import com.composables.icons.materialsymbols.outlined.License
@@ -60,7 +63,7 @@ import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.aboutlibraries.AboutLibrariesProvider
 import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.constants.PackageNames
-import dev.ujhhgtg.wekit.constants.PreferenceKeys
+import dev.ujhhgtg.wekit.constants.Preferences
 import dev.ujhhgtg.wekit.hooks.items.easter_egg.AprilFools
 import dev.ujhhgtg.wekit.hooks.items.easter_egg.isAprilFools
 import dev.ujhhgtg.wekit.preferences.WePrefs
@@ -99,7 +102,8 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.time.LocalDate
 
-class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfig.TAG) {
+class MainSettingsScreen(private val context: Context)
+    : BasePrefsScreen(BuildConfig.TAG) {
 
     override fun initPreferences() {
         if (LocalDate.now().isAprilFools) {
@@ -134,19 +138,28 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
             addPreference(
                 title = name, icon = icon,
                 onClick = {
-                    CategorySettingsDialog(context, name).show()
-                })
+                    CategorySettingsScreen(context, name).show(context)
+                }
+            )
         }
+
+        addCategory("界面")
+        addSwitchPreference(
+            key = Preferences.USE_ACTIVITY_INSTEAD_OF_DIALOG,
+            title = "使用全屏配置 UI",
+            summary = "使用 Activity 而非 Dialog 作为模块 UI 容器",
+            icon = MaterialSymbols.Outlined.Fullscreen
+        )
 
         addCategory("调试")
         addSwitchPreference(
-            key = PreferenceKeys.VERBOSE_LOG,
+            key = Preferences.VERBOSE_LOG,
             title = "详细日志",
             summary = "输出高频日志 (这可能会暴露你的隐私信息）",
             icon = MaterialSymbols.Outlined.Frame_bug
         )
         addSwitchPreference(
-            key = PreferenceKeys.SHOW_TOAST_ON_STARTUP_COMPLETE,
+            key = Preferences.SHOW_STARTUP_TOAST,
             title = "显示加载完成 Toast",
             summary = "全部功能加载完成后显示 Toast 提示",
             icon = MaterialSymbols.Outlined.Notifications
@@ -154,11 +167,12 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
 
         addCategory("兼容")
         addSwitchPreference(
-            key = PreferenceKeys.NO_DEX_RESOLVE,
+            key = Preferences.NO_DEX_RESOLVE,
             title = "禁用版本适配",
             summary = "开启后不会弹出 DEX 查找对话框，未适配功能将不会被加载",
             icon = MaterialSymbols.Outlined.Block
         )
+
         addCategory("配置")
         addPreference(
             title = "导出配置",
@@ -190,7 +204,6 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
                                                 @Suppress("UNCHECKED_CAST")
                                                 (value as Set<String>).forEach { add(it) }
                                             })
-
                                             null -> put(key, JsonNull)
                                         }
                                     }
@@ -243,19 +256,15 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
                                             element.isString -> WePrefs.default.putString(key, element.content)
                                             element.booleanOrNull != null && (element.content == "true" || element.content == "false") ->
                                                 WePrefs.putBool(key, element.boolean)
-
                                             element.longOrNull != null && element.intOrNull == null ->
                                                 WePrefs.putLong(key, element.long)
-
                                             element.intOrNull != null -> WePrefs.putInt(key, element.int)
                                             element.floatOrNull != null -> WePrefs.putFloat(key, element.float)
                                         }
-
                                         is JsonArray -> WePrefs.default.putStringSet(
                                             key,
                                             element.mapTo(HashSet()) { it.jsonPrimitive.content }
                                         )
-
                                         else -> Unit
                                     }
                                 }
@@ -329,17 +338,12 @@ class MainSettingsDialog(context: Context) : BasePrefsDialog(context, BuildConfi
                                 )
                             }
                         }
-
                         is UpdateResult.Error -> {
                             WeLogger.e("AppUpdater", "failed to check for updates", result.cause)
                             showComposeDialog(context) {
                                 AlertDialogContent(
                                     title = { Text("检查更新失败") },
-                                    text = {
-                                        Text(
-                                            "错误信息: ${result.cause.message}"
-                                        )
-                                    },
+                                    text = { Text("错误信息: ${result.cause.message}") },
                                     confirmButton = { TextButton(onDismiss) { Text("关闭") } },
                                 )
                             }

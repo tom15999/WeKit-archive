@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.hooks.items.contacts
 
 import android.app.Activity
+import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,7 +12,17 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.collection.mutableIntSetOf
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import com.highcapable.kavaref.extension.isSubclassOf
+import com.tencent.mm.plugin.voip.widget.VoipForegroundService
 import com.tencent.mm.ui.LauncherUI
 import com.tencent.mm.ui.chatting.ChattingUI
 import com.tencent.wcdb.database.SQLiteDatabase
@@ -24,7 +35,10 @@ import dev.ujhhgtg.wekit.hooks.api.ui.WeMainActivityBeautifyApi
 import dev.ujhhgtg.wekit.hooks.core.ClickableHookItem
 import dev.ujhhgtg.wekit.hooks.core.HookItem
 import dev.ujhhgtg.wekit.preferences.WePrefs
+import dev.ujhhgtg.wekit.preferences.WePrefs.Companion.prefOption
+import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.ContactsSelector
+import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -141,6 +155,8 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
     private lateinit var usernameField: Field
 
     override fun onEnable() {
+        // --- home screen conversation list ---
+
         WeMainActivityBeautifyApi.methodDoOnCreate.hookAfter {
             WeConversationApi.setConversationsVisibility(false, hiddenContacts.also {
                 WeLogger.d(TAG, "hid ${it.size} contacts in conversation list")
@@ -156,6 +172,8 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
             context.registerReceiver(ScreenOffReceiver, filter)
             WeLogger.d(TAG, "registered screen off receiver")
         }
+
+        // --- shake to leave ---
 
         ChattingUI::class.resolve().apply {
             firstMethod { name = "onResume" }.hookAfter {
@@ -174,6 +192,8 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
                 ShakeDetector.stop()
             }
         }
+
+        // --- friends & groups list ---
 
         methodAddressMvvmListPreprocessList.hookBefore {
             val contacts = args[0] as MutableList<*>
@@ -224,13 +244,12 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
             }
         }
 
-        methodChatroomContactAdapterInitCursor.method.declaringClass.resolve()
-            .firstMethod { name = "getCount" }.hookAfter {
+        methodChatroomContactAdapterInitCursor.method.declaringClass.resolve().apply {
+            firstMethod { name = "getCount" }.hookAfter {
                 result = result as Int - hiddenPositions.size
             }
 
-        methodChatroomContactAdapterInitCursor.method.declaringClass.resolve()
-            .firstMethod { name = "getView" }.hookBefore {
+            firstMethod { name = "getView" }.hookBefore {
                 val requestedPos = args[0] as Int
                 var actualPos = requestedPos
                 hiddenPositions.forEach {
@@ -240,27 +259,9 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
                 }
                 args[0] = actualPos
             }
+        }
 
-        // TODO:
-//        methodMainAdapterPreformSearch.hookAfter {
-//            val queryString = args[1] as String
-//            val searchUnit = args[0]
-//            val searchResults = (searchUnit.asResolver()
-//                .optional()
-//                .firstFieldOrNull {
-//                    type = java.util.List::class
-//                    superclass()
-//                } ?: return@hookAfter)
-//                .get()!! as MutableList<*>
-//
-//            val res = searchResults.firstOrNull() ?: return@hookAfter
-//            WeLogger.d(TAG, "queryString=$queryString, results.size=${searchResults.size}, elem=\n${describeContent(res)}")
-//            val elems = (res.asResolver().optional().firstFieldOrNull { name = "f" } ?: return@hookAfter).get()!!.cast<List<*>>()
-//            if (elems.first()?.javaClass?.name != "tx2.z") return@hookAfter
-//            val elem = elems.first()!!
-//            WeLogger.d(TAG, describeContent(elem))
-//            WeLogger.d(TAG, describeContent(elem.asResolver().firstField { name = "n"; superclass() }.get()!!.cast<List<*>>().first()))
-//        }
+        // --- fts ---
 
         SQLiteDatabase::class.asResolver().firstMethod {
             name = "rawQueryWithFactory"
@@ -279,7 +280,74 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
                 args[1] = newSql
             }
         }
+
+        // --- voip ---
+
+        methodVoipLaunchIncomingCardAsync.hookBefore {
+            val wxId = String(args[5] as ByteArray)
+            if (wxId in hiddenContacts) {
+                pendingVoipUser = wxId
+                result = null
+            }
+        }
+
+        listOf(
+            methodVoipAcceptIncomingCall, methodVoipStartAcceptVoip
+        ).forEach { it.hookBefore {
+            val callerWxId = args[0].asResolver().firstField { type = BString }.get()!! as String
+            if (callerWxId in hiddenContacts) {
+                pendingVoipUser = callerWxId
+                result = null
+            }
+        } }
+
+        methodVoipShowFloatingCard.hookBefore {
+            val wxId = args[5] as? String? ?: return@hookBefore
+            if (wxId in hiddenContacts) {
+                pendingVoipUser = wxId
+                result = null
+            }
+        }
+
+        methodVoipServiceExSetInviteContent.hookBefore {
+            val wxId = args[0].asResolver().firstField { type = BString }.get()!! as String
+            if (wxId in hiddenContacts) {
+                pendingVoipUser = wxId
+                if (autoRejectVoip) {
+                    WeLogger.i(TAG, "rejecting call")
+                    methodVoipServiceExReject.method.invoke(thisObject)
+                }
+                result = null
+            }
+        }
+
+        methodVoipBubbleHelperInsertMsg.hookBefore {
+            val wxId = args[0] as String
+            if (wxId in hiddenContacts) {
+                result = null
+            }
+        }
+
+        VoipForegroundService::class.asResolver().firstMethod { name = "onStartCommand" }.hookBefore {
+            val self = thisObject as VoipForegroundService
+            val intent = args[0] as? Intent? ?: return@hookBefore
+            val wxId = intent.getStringExtra("Voip_User") ?: return@hookBefore
+            if (wxId in hiddenContacts) {
+                pendingVoipUser = wxId
+                self.stopSelf()
+                result = Service.START_NOT_STICKY
+            }
+        }
+
+        methodVoipPlaySound.hookBefore {
+            if (pendingVoipUser != null) {
+                pendingVoipUser = null
+                result = null
+            }
+        }
     }
+
+    private var pendingVoipUser: String? = null
 
     private const val SQL_SELECT_MESSAGE =
         "SELECT type, subtype, entity_id, aux_index, MAX(timestamp) as maxTime, count(aux_index) as msgCount, talker FROM FTS5MetaMessage"
@@ -292,25 +360,73 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
 
     private val hiddenPositions = mutableIntSetOf()
 
+    private var autoRejectVoip by prefOption("hide_auto_reject", false)
+
     override fun onClick(context: Context) {
         val regularContacts = WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()
+
         showComposeDialog(context) {
-            ContactsSelector(
-                title = "选择要隐藏的联系人",
-                contacts = regularContacts,
-                initialSelectedWxIds = hiddenContacts,
-                onDismiss = onDismiss
-            ) {
-                showToast("已保存 ${it.size} 个联系人, 重启微信以使更改生效")
-                hiddenContacts = it
-                onDismiss()
-            }
+            AlertDialogContent(title = { Text("隐藏联系人") },
+                text = {
+                    DefaultColumn {
+                        var autoRejectVoipInput by remember { mutableStateOf(autoRejectVoip) }
+
+                        ListItem(
+                            headlineContent = { Text("自动拒绝音视频通话") },
+                            supportingContent = { Text("不保证有效") },
+                            trailingContent = {
+                                Switch(checked = autoRejectVoipInput, onCheckedChange = null)
+                            },
+                            modifier = Modifier.clickable {
+                                autoRejectVoipInput = !autoRejectVoipInput
+                                autoRejectVoip = autoRejectVoipInput
+                            }
+                        )
+
+                        ListItem(
+                            headlineContent = { Text("配置隐藏列表") },
+                            supportingContent = { Text("点击配置联系人隐藏列表") },
+                            modifier = Modifier.clickable {
+                                showComposeDialog(context) {
+                                    ContactsSelector(
+                                        title = "选择要隐藏的联系人",
+                                        contacts = regularContacts,
+                                        initialSelectedWxIds = hiddenContacts,
+                                        onDismiss = onDismiss
+                                    ) {
+                                        showToast("已保存 ${it.size} 个联系人, 重启微信以使更改生效")
+                                        hiddenContacts = it
+                                        onDismiss()
+                                    }
+                                }
+                            }
+                        )
+                    }
+                })
         }
     }
 
     private val methodMainAdapterPreformSearch by dexMethod()
     private val methodAddressMvvmListPreprocessList by dexMethod()
     private val methodChatroomContactAdapterInitCursor by dexMethod()
+    private val methodVoipLaunchNotify by dexMethod()
+    private val methodVoipLaunchIncomingCardAsync by dexMethod()
+    private val methodVoipAcceptIncomingCall by dexMethod()
+    private val methodVoipStartAcceptVoip by dexMethod()
+    private val methodVoipPlaySound by dexMethod()
+    private val methodVoipShowFloatingCard by dexMethod()
+    private val methodVoipServiceExSetInviteContent by dexMethod()
+    private val methodVoipServiceExReject by dexMethod()
+    private val methodVoipBubbleHelperInsertMsg by dexMethod()
+
+//    private val classVoipService by dexClass()
+//    private val classVoipManager by dexClass()
+//    private val classIncomingVoipInvite by dexClass()
+//    private val classIncomingVoipILinkInvite by dexClass()
+//    private val classMultiTalkInvite by dexClass()
+//    private val classVoipFloatCard by dexClass()
+//    private val classRecentForwardInfoHelperV3 by dexClass()
+//    private val classContactRecommendHelperV3 by dexClass()
 
     override fun resolveDex(dexKit: DexKitBridge) {
         methodMainAdapterPreformSearch.find(dexKit) {
@@ -342,5 +458,118 @@ object HideContacts : ClickableHookItem(), IResolvesDex {
                 }
             }
         }
+
+        methodVoipLaunchNotify.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.VoIPMP.CoreV2", "launchNotify")
+            }
+        }
+
+        methodVoipLaunchIncomingCardAsync.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.VoIPMP.CoreV2", "launchInComingCardAsync: ")
+            }
+        }
+
+        methodVoipAcceptIncomingCall.find(dexKit) {
+            searchPackages("com.tencent.mm.plugin.voip")
+            matcher {
+                usingEqStrings("MicroMsg.VoipIncomingCallManager", "acceptIncomingCal, roomInfo:")
+            }
+        }
+
+        methodVoipStartAcceptVoip.find(dexKit) {
+            searchPackages("com.tencent.mm.plugin.voip")
+            matcher {
+                usingEqStrings("MicroMsg.VoipIncomingCallManager", "startAcceptVoIP, roomInfo:")
+            }
+        }
+
+        methodVoipPlaySound.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.RingPlayer", "playend")
+                name = "run"
+            }
+        }
+
+        methodVoipShowFloatingCard.find(dexKit) {
+            matcher {
+                usingEqStrings(".ui.voip.VoipFloatView")
+                paramCount = 8
+            }
+        }
+
+        methodVoipServiceExSetInviteContent.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.Voip.VoipServiceEx", "Failed to setInviteContent during calling, status =")
+            }
+        }
+
+        methodVoipServiceExReject.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.Voip.VoipServiceEx", "Failed to reject with calling, status =")
+            }
+        }
+
+        methodVoipBubbleHelperInsertMsg.find(dexKit) {
+            matcher {
+                usingEqStrings("MicroMsg.VoIPBubbleHelper", "insertMsg() called with: voipInfo = ")
+            }
+        }
+
+//        classVoipService.find(dexKit) {
+//            searchPackages("com.tencent.mm.plugin.voip")
+//            matcher {
+//                usingStrings("MicroMsg.Voip.VoipService")
+//            }
+//        }
+
+//        classVoipManager.find(dexKit) {
+//            searchPackages("com.tencent.mm.plugin.voip")
+//            matcher {
+//                usingStrings("MicroMsg.Voip.VoipMgr")
+//            }
+//        }
+//
+//        classIncomingVoipInvite.find(dexKit) {
+//            searchPackages("com.tencent.mm.plugin.voip")
+//            matcher {
+//                usingStrings("/cgi-bin/micromsg-bin/voipinvite")
+//            }
+//        }
+//
+//        classIncomingVoipILinkInvite.find(dexKit) {
+//            searchPackages("com.tencent.mm.plugin.voip")
+//            matcher {
+//                usingStrings("/cgi-bin/micromsg-bin/voipilinkinvite")
+//            }
+//        }
+//
+//        classMultiTalkInvite.find(dexKit) {
+//            searchPackages("com.tencent.mm.plugin.multitalk")
+//            matcher {
+//                usingStrings("MicroMsg.MT.MultiTalkManager")
+//            }
+//        }
+//
+//        classVoipFloatCard.find(dexKit) {
+//            matcher {
+//                usingStrings("voip_content_voice", "voip_content_video")
+//            }
+//        }
+//
+//        classRecentForwardInfoHelperV3.find(dexKit) {
+//            searchPackages("com.tencent.mm.ui.contact")
+//            matcher {
+//                usingStrings("MicroMsg.RecentForwardInfoStorage", "[query] list size=")
+//            }
+//        }
+//
+//        classContactRecommendHelperV3.find(dexKit) {
+//            searchPackages("com.tencent.mm.ui.contact")
+//            matcher {
+//                usingStrings("MicroMsg.ContactRecommendHelper", "getChatroomByMembername cnt:%d time:%d")
+//            }
+//        }
     }
 }

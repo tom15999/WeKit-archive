@@ -34,13 +34,30 @@ object WeLauncher {
         }
 
         runCatching {
-            HookItemsLoader.loadHookItems(HostInfo.appInfo)
+            HookItemsLoader.loadHookItems()
         }.onFailure { WeLogger.e(TAG, "failed to load hooks", it) }
     }
 
     private fun initMainProcessHooks() {
-        LauncherUI::class.resolve()
-            .firstMethod {
+        LauncherUI::class.resolve().apply {
+            // FIXME: see BasePrefsScreen line 298
+//            firstMethod { name = "onCreate" }.hookBeforeDirectly {
+//                Handler(Looper.getMainLooper()).post {
+//                    while (true) {
+//                        try {
+//                            Looper.loop()
+//                        } catch (e: Throwable) {
+//                            if (e is NullPointerException && e.message?.contains("android.view.InputEventCompatProcessor.processInputEventForCompatibility(android.view.InputEvent)") == true) {
+//                                WeLogger.e("FuckYouGoogle", "fuck you google", e)
+//                            } else {
+//                                throw e
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+
+            firstMethod {
                 name = "onCreate"
                 parameters(Bundle::class)
             }.hookAfterDirectly {
@@ -49,6 +66,7 @@ object WeLauncher {
                     activity.getSharedPreferences("${PackageNames.WECHAT}_preferences", 0)
                 RuntimeConfig.mmPrefs = sharedPreferences
             }
+        }
     }
 
     private val TAG = This.Class.simpleName

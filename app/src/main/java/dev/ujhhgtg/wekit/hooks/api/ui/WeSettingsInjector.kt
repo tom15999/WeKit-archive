@@ -29,7 +29,7 @@ import dev.ujhhgtg.wekit.dexkit.dsl.dexClass
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.hooks.core.ApiHookItem
 import dev.ujhhgtg.wekit.hooks.core.HookItem
-import dev.ujhhgtg.wekit.ui.content.MainSettingsDialog
+import dev.ujhhgtg.wekit.ui.content.MainSettingsScreen
 import dev.ujhhgtg.wekit.ui.utils.ExtensionIcon
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
@@ -483,7 +483,9 @@ object WeSettingsInjector : ApiHookItem(), IResolvesDex, WeHomeScreenPopupMenuAp
     }
 
     @Suppress("NOTHING_TO_INLINE")
-    private inline fun openSettingsDialog(context: Context) = MainSettingsDialog(context).show()
+    private inline fun openSettingsDialog(context: Context) {
+        MainSettingsScreen(context).show(context)
+    }
 
 //    private class SettingsMenuItemClickListener(val context: Context) :
 //        MenuItem.OnMenuItemClickListener {
