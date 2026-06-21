@@ -83,7 +83,6 @@ import dev.ujhhgtg.wekit.utils.android.currentWxId
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.reflection.BString
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
 import dev.ujhhgtg.wekit.utils.reflection.bool
 import kotlinx.serialization.json.Json
 import org.luckypray.dexkit.DexKitBridge
@@ -123,6 +122,8 @@ object CustomLocalFriendAvatars : ClickableHookItem(), IContactInfoProvider, IRe
 
     // com.tencent.mm.feature.avatar.w.pg; an exception: this doesn't call methodMvvmLoadAvatar
     private val methodFeatureAvatarSimple1 by dexMethod()
+
+    private val classAvatarDrawable by dexClass()
 
     private val methodPluginsdkLoadAvatar by dexMethod()
 
@@ -164,6 +165,13 @@ object CustomLocalFriendAvatars : ClickableHookItem(), IContactInfoProvider, IRe
             }
         }
 
+        classAvatarDrawable.find(dexKit) {
+            searchPackages("com.tencent.mm.feature.avatar")
+            matcher {
+                usingEqStrings("MicroMsg.AvatarDrawable", "imageView is null", "?access_token=")
+            }
+        }
+
         methodMvvmLoadAvatar1.find(dexKit) {
             matcher {
                 declaredClass(classAvatarGetContactServiceHelper.clazz)
@@ -192,16 +200,8 @@ object CustomLocalFriendAvatars : ClickableHookItem(), IContactInfoProvider, IRe
         }
 
         methodFeatureAvatarSimple1.find(dexKit) {
-            // com.tencent.mm.feature.avatar.w
-            val avatarDrawableClass = DexKit.findClass {
-                searchPackages("com.tencent.mm.feature.avatar")
-                matcher {
-                    usingEqStrings("MicroMsg.AvatarDrawable", "imageView is null", "?access_token=")
-                }
-            }.single().name
-
             matcher {
-                declaredClass = avatarDrawableClass
+                declaredClass = classAvatarDrawable.clazz.name
                 paramTypes(
                     "android.widget.ImageView",
                     "java.lang.String"
