@@ -24,6 +24,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,6 +48,7 @@ import com.composables.icons.materialsymbols.outlinedfilled.Contacts
 import com.composables.icons.materialsymbols.outlinedfilled.Explore
 import com.composables.icons.materialsymbols.outlinedfilled.Home
 import com.composables.icons.materialsymbols.outlinedfilled.Person
+import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.ui.WeMainActivityBeautifyApi
@@ -63,7 +65,6 @@ import dev.ujhhgtg.wekit.ui.utils.AppTheme
 import dev.ujhhgtg.wekit.ui.utils.LifecycleOwnerProvider
 import dev.ujhhgtg.wekit.ui.utils.setLifecycleOwner
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
-import dev.ujhhgtg.reflekt.reflekt
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 
 @Feature(name = "美化首页底部导航栏", categories = ["界面美化"], description = "将首页底部导航栏替换为 Material Design 或 Backdrop 风格")
@@ -75,6 +76,7 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
         val label: String
     )
 
+    @Stable
     private val ICONS = listOf(
         NavItem(MaterialSymbols.Outlined.Home, MaterialSymbols.OutlinedFilled.Home, "主页"),
         NavItem(MaterialSymbols.Outlined.Contacts, MaterialSymbols.OutlinedFilled.Contacts, "联系人"),

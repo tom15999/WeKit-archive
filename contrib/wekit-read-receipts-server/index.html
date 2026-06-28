@@ -1,84 +1,832 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Read Receipts</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; padding: 2rem; }
-  .container { max-width: 960px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-  .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
-  .controls input { padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9rem; flex: 1; min-width: 200px; }
-  .controls button { padding: 0.5rem 1rem; border: none; border-radius: 6px; font-size: 0.9rem; cursor: pointer; }
-  .btn-primary { background: #2563eb; color: #fff; }
-  .btn-secondary { background: #6b7280; color: #fff; }
-  .controls button:hover { filter: brightness(1.1); }
-  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  th, td { text-align: left; padding: 0.75rem 1rem; font-size: 0.875rem; }
-  th { background: #f9fafb; font-weight: 600; border-bottom: 2px solid #e5e7eb; }
-  td { border-bottom: 1px solid #f3f4f6; }
-  tr:hover td { background: #f9fafb; }
-  .error { color: #dc2626; margin-bottom: 1rem; }
-  .loading { color: #6b7280; margin-bottom: 1rem; }
-  .empty { color: #9ca3af; text-align: center; padding: 2rem; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>Read Receipts</h1>
-  <div class="controls">
-    <button class="btn-primary" onclick="loadAll()">Load All</button>
-    <span style="color:#9ca3af">or</span>
-    <input id="uuidInput" type="text" placeholder="Enter UUID..." />
-    <button class="btn-secondary" onclick="loadByUuid()">Query UUID</button>
-    <input id="msgFilter" type="text" placeholder="Filter by message..." />
-  </div>
-  <div id="status"></div>
-  <table>
-    <thead><tr><th>UUID</th><th>Message</th><th>IP</th><th>Timestamp</th></tr></thead>
-    <tbody id="tbody"></tbody>
-  </table>
-</div>
-<script>
-const tbody = document.getElementById('tbody');
-const status = document.getElementById('status');
-function filterUrl(base) {
-  const q = document.getElementById('msgFilter').value.trim();
-  return q ? base + '?q=' + encodeURIComponent(q) : base;
-}
-async function loadAll() {
-  await fetchData(filterUrl('/receipts'));
-}
-async function loadByUuid() {
-  const uuid = document.getElementById('uuidInput').value.trim();
-  if (!uuid) { status.innerHTML = '<div class="error">Please enter a UUID</div>'; return; }
-  await fetchData(filterUrl('/receipts/' + encodeURIComponent(uuid)));
-}
-async function fetchData(url) {
-  status.innerHTML = '<div class="loading">Loading...</div>';
-  tbody.innerHTML = '';
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      const text = await res.text();
-      status.innerHTML = '<div class="error">HTTP ' + res.status + ': ' + text + '</div>';
-      return;
-    }
-    const data = await res.json();
-    status.innerHTML = '';
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td class="empty" colspan="4">No receipts found</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map(r => '<tr><td>' + esc(r.uuid) + '</td><td>' + esc(r.msg) + '</td><td>' + esc(r.ip) + '</td><td>' + esc(r.timestamp) + '</td></tr>').join('');
-  } catch (e) {
-    status.innerHTML = '<div class="error">Network error: ' + esc(e.message) + '</div>';
-  }
-}
-function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-document.getElementById('uuidInput').addEventListener('keydown', function(e) { if (e.key === 'Enter') loadByUuid(); });
-</script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="title">Read Receipts</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #0f172a;
+        color: #e2e8f0;
+        min-height: 100vh;
+        padding: 2rem 1rem;
+      }
+      .container {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
+      /* header */
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .header h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #f1f5f9;
+      }
+      .header .subtitle {
+        font-size: 0.85rem;
+        color: #64748b;
+      }
+
+      /* controls bar */
+      .controls {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+      }
+      .controls .field-group {
+        display: flex;
+        gap: 0.35rem;
+        align-items: center;
+      }
+      .controls input {
+        padding: 0.45rem 0.7rem;
+        border: 1px solid #475569;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        background: #0f172a;
+        color: #e2e8f0;
+        outline: none;
+        transition: border-color 0.15s;
+        min-width: 180px;
+      }
+      .controls input:focus {
+        border-color: #3b82f6;
+      }
+      .controls input::placeholder {
+        color: #475569;
+      }
+      .controls .sep {
+        color: #475569;
+        font-size: 0.8rem;
+        padding: 0 0.15rem;
+      }
+
+      /* buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.45rem 0.85rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition:
+          background 0.15s,
+          box-shadow 0.15s;
+      }
+      .btn:active {
+        transform: scale(0.97);
+      }
+      .btn-primary {
+        background: #2563eb;
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #1d4ed8;
+      }
+      .btn-secondary {
+        background: #475569;
+        color: #e2e8f0;
+      }
+      .btn-secondary:hover {
+        background: #64748b;
+      }
+      .btn-danger {
+        background: #b91c1c;
+        color: #fff;
+      }
+      .btn-danger:hover {
+        background: #991b1b;
+      }
+      .btn-outline {
+        background: transparent;
+        color: #94a3b8;
+        border: 1px solid #475569;
+      }
+      .btn-outline:hover {
+        background: #1e293b;
+        color: #e2e8f0;
+      }
+      .btn-sm {
+        padding: 0.3rem 0.6rem;
+        font-size: 0.75rem;
+      }
+      .lang-toggle {
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.2rem 0.45rem;
+        border-radius: 4px;
+        background: transparent;
+        color: #64748b;
+        border: 1px solid #475569;
+        cursor: pointer;
+        transition:
+          color 0.15s,
+          border-color 0.15s;
+        letter-spacing: 0.03em;
+      }
+      .lang-toggle:hover {
+        color: #e2e8f0;
+        border-color: #94a3b8;
+      }
+
+      /* table card */
+      .table-wrapper {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.65rem 1rem;
+        font-size: 0.825rem;
+      }
+      th {
+        background: #0f172a;
+        font-weight: 600;
+        color: #94a3b8;
+        border-bottom: 1px solid #334155;
+      }
+      td {
+        border-bottom: 1px solid #1e293b;
+        color: #cbd5e1;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: #0f172a80;
+      }
+
+      .uuid-col {
+        font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace;
+        font-size: 0.78rem;
+        color: #60a5fa;
+      }
+      .ip-col {
+        font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace;
+        font-size: 0.78rem;
+        color: #a78bfa;
+      }
+      .ip-region {
+        color: #34d399;
+        font-size: 0.7rem;
+        font-weight: 400;
+      }
+      .msg-col {
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ts-col {
+        color: #94a3b8;
+        white-space: nowrap;
+      }
+
+      .empty-row td {
+        text-align: center;
+        padding: 2.5rem 1rem;
+        color: #475569;
+        font-size: 0.85rem;
+      }
+
+      /* stats bar */
+      .stats {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 1rem;
+        background: #0f172a;
+        border-bottom: 1px solid #334155;
+        font-size: 0.78rem;
+        color: #64748b;
+      }
+      .stats .count {
+        color: #94a3b8;
+        font-weight: 600;
+      }
+
+      /* toast */
+      .toast-container {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .toast {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.65rem 1rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        animation: toast-in 0.25s ease-out;
+        max-width: 360px;
+      }
+      .toast-success {
+        background: #065f46;
+        color: #a7f3d0;
+        border: 1px solid #059669;
+      }
+      .toast-error {
+        background: #7f1d1d;
+        color: #fecaca;
+        border: 1px solid #dc2626;
+      }
+      .toast-info {
+        background: #1e3a5f;
+        color: #bfdbfe;
+        border: 1px solid #2563eb;
+      }
+      @keyframes toast-in {
+        from {
+          opacity: 0;
+          translate: 0 -0.5rem;
+        }
+        to {
+          opacity: 1;
+          translate: 0;
+        }
+      }
+      .toast-out {
+        animation: toast-out 0.2s ease-in forwards;
+      }
+      @keyframes toast-out {
+        to {
+          opacity: 0;
+          translate: 0 -0.5rem;
+        }
+      }
+
+      /* modal overlay */
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: fade-in 0.15s ease-out;
+      }
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      .modal {
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      }
+      .modal h3 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+      }
+      .modal p {
+        font-size: 0.875rem;
+        color: #94a3b8;
+        margin-bottom: 1.25rem;
+        line-height: 1.5;
+      }
+      .modal .actions {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+      }
+
+      /* utility */
+      .hidden {
+        display: none !important;
+      }
+      .flex {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 1rem 0.5rem;
+        }
+        .controls {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .controls .field-group {
+          flex: 1;
+        }
+        .controls input {
+          min-width: 0;
+          width: 100%;
+        }
+        .stats {
+          flex-direction: column;
+          gap: 0.3rem;
+          text-align: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div>
+          <h1 data-i18n="title">Read Receipts</h1>
+          <div class="subtitle" data-i18n="subtitle">Tracking pixel hits</div>
+        </div>
+        <div class="flex">
+          <button class="lang-toggle" onclick="toggleLang()">中 / EN</button>
+          <button
+            class="btn btn-outline btn-sm"
+            onclick="loadAll()"
+            data-i18n="refresh"
+          >
+            Refresh
+          </button>
+          <button
+            class="btn btn-danger btn-sm"
+            onclick="showClearAllModal()"
+            data-i18n="clearAll"
+          >
+            Clear All
+          </button>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="field-group">
+          <input
+            id="uuidInput"
+            type="text"
+            data-i18n="filterUuid"
+            data-i18n-placeholder
+            placeholder="Filter by UUID..."
+          />
+          <button
+            class="btn btn-secondary"
+            onclick="loadByUuid()"
+            data-i18n="query"
+          >
+            Query
+          </button>
+          <button
+            class="btn btn-outline btn-sm"
+            onclick="clearByUuid()"
+            data-i18n="delete"
+            data-i18n-title="deleteTitle"
+            title="Delete records for this UUID"
+          >
+            Delete
+          </button>
+        </div>
+        <span class="sep">|</span>
+        <div class="field-group">
+          <input
+            id="msgFilter"
+            type="text"
+            data-i18n="filterMsg"
+            data-i18n-placeholder
+            placeholder="Filter by message text..."
+          />
+        </div>
+      </div>
+
+      <div class="table-wrapper">
+        <div class="stats">
+          <span
+            ><span class="count" id="recordCount">0</span
+            ><span data-i18n="records"> records</span></span
+          >
+          <span id="filterHint"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="uuid">UUID</th>
+              <th data-i18n="message">Message</th>
+              <th data-i18n="ip">IP</th>
+              <th data-i18n="timestamp">Timestamp</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="toastContainer" class="toast-container"></div>
+    <div id="modalOverlay" class="modal-overlay hidden">
+      <div class="modal">
+        <h3 id="modalTitle" data-i18n="confirm">Confirm</h3>
+        <p id="modalBody"></p>
+        <div class="actions">
+          <button class="btn btn-secondary" id="modalCancel" data-i18n="cancel">
+            Cancel
+          </button>
+          <button class="btn btn-danger" id="modalConfirm" data-i18n="delete">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const tbody = document.getElementById("tbody");
+      const recordCount = document.getElementById("recordCount");
+      const filterHint = document.getElementById("filterHint");
+      const toastContainer = document.getElementById("toastContainer");
+      const modalOverlay = document.getElementById("modalOverlay");
+      const modalTitle = document.getElementById("modalTitle");
+      const modalBody = document.getElementById("modalBody");
+      const modalCancel = document.getElementById("modalCancel");
+      const modalConfirm = document.getElementById("modalConfirm");
+
+      let currentFilterUrl = "";
+
+      /* ── i18n ── */
+      let lang = localStorage.getItem("lang") || "zh-CN";
+
+      const translations = {
+        "zh-CN": {
+          title: "已读追踪",
+          subtitle: "追踪像素统计",
+          refresh: "刷新",
+          clearAll: "清除",
+          filterUuid: "按 UUID 过滤...",
+          query: "查询",
+          delete: "删除",
+          deleteTitle: "删除此 UUID 的所有回执",
+          filterMsg: "按消息内容过滤...",
+          uuid: "UUID",
+          message: "消息",
+          ip: "IP",
+          timestamp: "时间",
+          records: " 条记录",
+          confirm: "确认",
+          cancel: "取消",
+          clearAllTitle: "清除所有记录？",
+          clearAllBody: "这将永久删除数据库中的所有已读回执记录。",
+          clearUuidTitle: "清除此 UUID 的记录？",
+          clearUuidBody: '这将删除 UUID "{0}" 的所有回执记录。',
+          loading: "加载中...",
+          noRecords: "暂无回执",
+          networkError: "网络错误",
+          clearingAll: "正在清除所有记录…",
+          clearedAll: "已清除所有记录",
+          failedClear: "清除记录失败",
+          enterUuid: "请输入 UUID",
+          enterUuidDel: "请输入要删除的 UUID",
+          clearingUuid: "正在清除 {0} 的记录…",
+          clearedUuid: "已清除 {0} 的记录",
+          failedClearUuid: "清除 UUID 记录失败",
+        },
+        en: {
+          title: "Read Receipts",
+          subtitle: "Tracking pixel hits",
+          refresh: "Refresh",
+          clearAll: "Clear All",
+          filterUuid: "Filter by UUID...",
+          query: "Query",
+          delete: "Delete",
+          deleteTitle: "Delete records for this UUID",
+          filterMsg: "Filter by message text...",
+          uuid: "UUID",
+          message: "Message",
+          ip: "IP",
+          timestamp: "Timestamp",
+          records: " records",
+          confirm: "Confirm",
+          cancel: "Cancel",
+          clearAllTitle: "Clear all records?",
+          clearAllBody:
+            "This will permanently delete every read receipt from the database.",
+          clearUuidTitle: "Clear records for this UUID?",
+          clearUuidBody: 'This will delete all receipts for UUID "{0}".',
+          loading: "Loading...",
+          noRecords: "No receipts found",
+          networkError: "Network error",
+          clearingAll: "Clearing all records…",
+          clearedAll: "All records cleared",
+          failedClear: "Failed to clear records",
+          enterUuid: "Please enter a UUID",
+          enterUuidDel: "Enter a UUID to delete",
+          clearingUuid: "Clearing records for {0}…",
+          clearedUuid: "Records for {0} cleared",
+          failedClearUuid: "Failed to clear UUID records",
+        },
+      };
+
+      function t(key, ...args) {
+        let s = translations[lang][key];
+        if (!s) return key;
+        args.forEach((a, i) => {
+          s = s.split("{" + i + "}").join(a);
+        });
+        return s;
+      }
+
+      function applyI18n() {
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          const key = el.dataset.i18n;
+          if (el.tagName === "TITLE") {
+            document.title = t(key);
+          } else if ("i18nPlaceholder" in el.dataset) {
+            el.placeholder = t(key);
+          } else {
+            el.textContent = t(key);
+          }
+        });
+        document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+          el.title = t(el.dataset.i18nTitle);
+        });
+      }
+
+      function toggleLang() {
+        lang = lang === "zh-CN" ? "en" : "zh-CN";
+        localStorage.setItem("lang", lang);
+        applyI18n();
+      }
+
+      /* ── toast ── */
+      function toast(message, type = "info") {
+        const el = document.createElement("div");
+        el.className = `toast toast-${type}`;
+        el.textContent = message;
+        toastContainer.appendChild(el);
+        setTimeout(() => {
+          el.classList.add("toast-out");
+        }, 2800);
+        setTimeout(() => el.remove(), 3100);
+      }
+
+      /* ── modal ── */
+      function showModal(title, body, onConfirm) {
+        modalTitle.textContent = title;
+        modalBody.textContent = body;
+        modalOverlay.classList.remove("hidden");
+
+        const cleanup = () => {
+          modalOverlay.classList.add("hidden");
+          modalConfirm.onclick = null;
+        };
+        modalCancel.onclick = cleanup;
+        // close on overlay click
+        modalOverlay.onclick = (e) => {
+          if (e.target === modalOverlay) cleanup();
+        };
+        modalConfirm.onclick = () => {
+          cleanup();
+          onConfirm();
+        };
+      }
+
+      function showClearAllModal() {
+        showModal(t("clearAllTitle"), t("clearAllBody"), () => {
+          deleteAll();
+        });
+      }
+
+      function showClearUuidModal(uuid) {
+        showModal(t("clearUuidTitle"), t("clearUuidBody", uuid), () => {
+          deleteByUuid(uuid);
+        });
+      }
+
+      /* ── fetch helpers ── */
+      function buildUrl(base) {
+        const q = document.getElementById("msgFilter").value.trim();
+        let url = base;
+        const params = [];
+        if (q) params.push("q=" + encodeURIComponent(q));
+        if (params.length) url += "?" + params.join("&");
+        return url;
+      }
+
+      async function loadAll() {
+        currentFilterUrl = buildUrl("/receipts");
+        await fetchData(currentFilterUrl);
+      }
+
+      async function loadByUuid() {
+        const uuid = document.getElementById("uuidInput").value.trim();
+        if (!uuid) {
+          toast(t("enterUuid"), "error");
+          return;
+        }
+        currentFilterUrl = buildUrl("/receipts/" + encodeURIComponent(uuid));
+        await fetchData(currentFilterUrl);
+      }
+
+      async function fetchData(url) {
+        tbody.innerHTML =
+          '<tr class="empty-row"><td colspan="4">' +
+          esc(t("loading")) +
+          "</td></tr>";
+        recordCount.textContent = "…";
+        try {
+          const res = await fetch(url);
+          if (!res.ok) {
+            const text = await res.text();
+            tbody.innerHTML = `<tr class="empty-row"><td colspan="4">HTTP ${res.status}: ${esc(text)}</td></tr>`;
+            recordCount.textContent = "0";
+            toast(`HTTP ${res.status}: ${text}`, "error");
+            return;
+          }
+          const data = await res.json();
+          recordCount.textContent = data.length;
+          if (!data.length) {
+            tbody.innerHTML =
+              '<tr class="empty-row"><td colspan="4">' +
+              esc(t("noRecords")) +
+              "</td></tr>";
+            return;
+          }
+          await resolveRegions(data.map((r) => r.ip));
+
+          tbody.innerHTML = data
+            .map(
+              (r) => `<tr>
+      <td class="uuid-col">${esc(r.uuid)}</td>
+      <td class="msg-col">${esc(r.msg)}</td>
+      <td class="ip-col">${esc(r.ip)}${fmtRegion(getRegion(r.ip))}</td>
+      <td class="ts-col">${esc(r.timestamp)}</td>
+    </tr>`,
+            )
+            .join("");
+        } catch (e) {
+          tbody.innerHTML =
+            '<tr class="empty-row"><td colspan="4">' +
+            esc(t("networkError")) +
+            "</td></tr>";
+          toast(t("networkError") + ": " + e.message, "error");
+        }
+      }
+
+      /* ── delete ── */
+      async function deleteAll() {
+        toast(t("clearingAll"), "info");
+        try {
+          const res = await fetch("/receipts", { method: "DELETE" });
+          if (!res.ok) {
+            toast(t("failedClear"), "error");
+            return;
+          }
+          toast(t("clearedAll"), "success");
+          await loadAll();
+        } catch (e) {
+          toast(t("networkError") + ": " + e.message, "error");
+        }
+      }
+
+      function clearByUuid() {
+        const uuid = document.getElementById("uuidInput").value.trim();
+        if (!uuid) {
+          toast(t("enterUuidDel"), "error");
+          return;
+        }
+        showClearUuidModal(uuid);
+      }
+
+      async function deleteByUuid(uuid) {
+        toast(t("clearingUuid", uuid), "info");
+        try {
+          const res = await fetch("/receipts/" + encodeURIComponent(uuid), {
+            method: "DELETE",
+          });
+          if (!res.ok) {
+            toast(t("failedClearUuid"), "error");
+            return;
+          }
+          toast(t("clearedUuid", uuid), "success");
+          await loadAll();
+        } catch (e) {
+          toast(t("networkError") + ": " + e.message, "error");
+        }
+      }
+
+      /* ── IP region lookup (via ip-api.com batch, cached) ── */
+      const regionCache = new Map();
+
+      function isPrivateIP(ip) {
+        const p = ip.split(".").map(Number);
+        if (p.length !== 4) return false;
+        return (
+          p[0] === 10 ||
+          p[0] === 127 ||
+          (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+          (p[0] === 192 && p[1] === 168) ||
+          p[0] === 0
+        );
+      }
+
+      function getRegion(ip) {
+        if (regionCache.has(ip)) return regionCache.get(ip);
+        if (isPrivateIP(ip)) return "内网";
+        return "";
+      }
+
+      function fmtRegion(region) {
+        return region ? `<span class="ip-region"> (${esc(region)})</span>` : "";
+      }
+
+      async function resolveRegions(ips) {
+        const unique = [
+          ...new Set(
+            ips.filter((ip) => !regionCache.has(ip) && !isPrivateIP(ip)),
+          ),
+        ];
+        if (unique.length === 0) return;
+
+        try {
+          for (let i = 0; i < unique.length; i += 100) {
+            const chunk = unique.slice(i, i + 100);
+            const res = await fetch("http://ip-api.com/batch?lang=" + lang, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                chunk.map((ip) => ({ query: ip, fields: "query,regionName" })),
+              ),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const results = await res.json();
+            for (const r of results) {
+              regionCache.set(r.query, r.regionName || "");
+            }
+          }
+        } catch (e) {
+          // Mark uncached IPs as empty so we don't retry
+          for (const ip of unique) {
+            if (!regionCache.has(ip)) regionCache.set(ip, "");
+          }
+        }
+      }
+
+      /* ── utils ── */
+      function esc(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      /* ── keyboard ── */
+      document.getElementById("uuidInput").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") loadByUuid();
+      });
+      document.getElementById("msgFilter").addEventListener("input", () => {
+        loadAll();
+      });
+
+      /* ── init ── */
+      applyI18n();
+      loadAll();
+    </script>
+  </body>
 </html>

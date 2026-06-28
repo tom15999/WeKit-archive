@@ -158,7 +158,7 @@ private fun rememberGravityRotatedHighlight(
         val gMagSq = gx * gx + gy * gy
         val (lx0, ly0) = if (gMagSq > GRAVITY_DIR_THRESHOLD_SQ) {
             val invMag = 1f / sqrt(gMagSq)
-            (gx * invMag) to (gy * invMag)
+            gx * invMag to gy * invMag
         } else {
             0f to -1f
         }
