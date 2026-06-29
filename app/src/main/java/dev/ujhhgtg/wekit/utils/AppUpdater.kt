@@ -128,12 +128,8 @@ object AppUpdater {
         val fileName = "wekit-${info.versionName}.apk"
 
         val downloadId = enqueueDownload(context, apkUrl, fileName)
-        waitForDownload(context, downloadId)
+        val apkFile = waitForDownload(context, downloadId)
 
-        val apkFile = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            fileName,
-        )
         install(context, apkFile)
     }
 
@@ -163,7 +159,7 @@ object AppUpdater {
     }
 
     /** Suspends until [DownloadManager] broadcasts completion for [downloadId]. */
-    private suspend fun waitForDownload(context: Context, downloadId: Long) =
+    private suspend fun waitForDownload(context: Context, downloadId: Long): File =
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 val receiver = object : BroadcastReceiver() {
@@ -175,23 +171,30 @@ object AppUpdater {
 
                         val dm = context.getSystemService<DownloadManager>()
                         val query = DownloadManager.Query().setFilterById(downloadId)
-                        val cursor = dm.query(query)
 
-                        if (cursor != null && cursor.moveToFirst()) {
-                            val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                            when (cursor.getInt(statusCol)) {
-                                DownloadManager.STATUS_SUCCESSFUL -> cont.resume(Unit)
-                                else -> {
+                        dm.query(query)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                                if (cursor.getInt(statusCol) == DownloadManager.STATUS_SUCCESSFUL) {
+
+                                    // 核心：动态获取 DownloadManager 实际保存的本地真实路径
+                                    val localUriCol = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                                    val localUriStr = cursor.getString(localUriCol)
+
+                                    runCatching {
+                                        val realFile = File(android.net.Uri.parse(localUriStr).path!!)
+                                        cont.resume(realFile)
+                                    }.getOrElse {
+                                        cont.resumeWithException(RuntimeException("Failed to resolve download path", it))
+                                    }
+                                } else {
                                     val reasonCol = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
-                                    cont.resumeWithException(
-                                        RuntimeException("Download failed: reason=${cursor.getInt(reasonCol)}")
-                                    )
+                                    cont.resumeWithException(RuntimeException("Download failed: reason=${cursor.getInt(reasonCol)}"))
                                 }
+                            } else {
+                                cont.resumeWithException(RuntimeException("Download query returned no results"))
                             }
-                            cursor.close()
-                        } else {
-                            cont.resumeWithException(RuntimeException("Download query returned no results"))
-                        }
+                        } ?: cont.resumeWithException(RuntimeException("Download query returned null cursor"))
                     }
                 }
 

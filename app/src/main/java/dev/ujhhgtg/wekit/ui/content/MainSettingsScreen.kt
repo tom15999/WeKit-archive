@@ -205,7 +205,7 @@ class MainSettingsScreen : BasePrefsScreen(BuildConfig.TAG) {
         addSwitchPreference(
             key = Preferences.RESET_DEX_ON_HOT_UPDATE,
             title = "宿主热更新时重新适配",
-            summary = "宿主热更新时是否重置适配 DEX 缓存, 可能导致频繁重新适配 (实验性)",
+            summary = "宿主热更新时是否重置 DEX 缓存, 可能导致频繁重新适配 (实验性)",
             icon = MaterialSymbols.Outlined.Auto_delete
         )
 

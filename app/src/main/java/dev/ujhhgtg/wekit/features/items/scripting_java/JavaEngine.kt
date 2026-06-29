@@ -234,7 +234,7 @@ object JavaEngine {
 
             // ===== Plugin Info =====
 
-            setVariable("pluginDir", plugin.dir.absolutePathString())
+            setVariable("pluginDir", plugin.dir.toFile())
             setVariable("pluginId", plugin.name)
             setVariable("pluginName", plugin.info.name)
             setVariable("pluginAuthor", plugin.info.author)
@@ -1623,13 +1623,10 @@ object JavaEngine {
                 val toUser = it[0] as String
                 val mediaMsg = it[1]
                 val appId = it[2] as String
-                return@BshMethod try {
-                    WeMessageApi.methodSendAppMsg.method.invoke(null, mediaMsg, appId, "", toUser, 3, null)
+                return@BshMethod runCatchingBsh("sendMediaMsg") {
+                    WeMessageApi.sendMediaMsg(toUser, mediaMsg, appId)
                     true
-                } catch (e: Exception) {
-                    WeLogger.e(TAG, "sendMediaMsg failed", e)
-                    false
-                }
+                }.getOrDefault(false)
             })
             setMethod(BshMethod("sendCipherMsg", arrayOf(BString, BString, BString)) {
                 val toUser = it[0] as String

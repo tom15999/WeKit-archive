@@ -103,9 +103,9 @@ object JavaScriptingHook : SwitchFeature(), IResolveDex, WeDatabaseListenerApi.I
 
     override fun onDisable() {
         WeDatabaseListenerApi.removeListener(this)
-        scripts.clear()
         JavaHookApi.unhookEverything()
         JavaEngine.executeAllOnUnload(scripts)
+        scripts.clear()
     }
 
     override fun onInsert(table: String, values: ContentValues) {
