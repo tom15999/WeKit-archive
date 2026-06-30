@@ -7,7 +7,6 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridView
 import android.widget.LinearLayout
@@ -74,6 +73,7 @@ import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
+import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -189,19 +189,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
     }
 
     private fun insertQuickReply(text: String) {
-        val chatFooter = WeCurrentConversationApi.chatFooter ?: run {
-            WeLogger.w(TAG, "no chat footer available to insert quick reply")
-            return
-        }
-        val editText = chatFooter.findViewWhich<EditText> { it is EditText } ?: run {
-            WeLogger.w(TAG, "no input EditText found to insert quick reply")
-            return
-        }
-        val editable = editText.text
-        val start = editText.selectionStart.coerceAtLeast(0)
-        val end = editText.selectionEnd.coerceAtLeast(0)
-        editable.replace(minOf(start, end), maxOf(start, end), text)
-        editText.setSelection(minOf(start, end) + text.length)
+        WeMessageApi.sendText(WeCurrentConversationApi.value, text)
     }
 
     override fun onEnable() {
