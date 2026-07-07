@@ -10,6 +10,7 @@ import dev.ujhhgtg.reflekt.Reflect
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.reflekt.utils.createInstance
+import dev.ujhhgtg.reflekt.utils.isSubclassOf
 import dev.ujhhgtg.reflekt.utils.toClass
 import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -284,6 +285,20 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
         }
     }
 
+    val methodGetSnsVideoFullPath by dexMethod {
+        matcher {
+            declaredClass(classSnsVideoLogic.clazz)
+            modifiers = Modifier.STATIC
+            paramCount(2)
+            paramTypes(String::class.java, null)
+            returnType(String::class.java)
+            usingEqStrings(
+                "getSnsVideoFullPath",
+                "getSnsVideoFullPath have flag %s, %s >>"
+            )
+        }
+    }
+
     val methodIsSnsVideoDownloadFinished by dexMethod {
         matcher {
             declaredClass(classSnsVideoLogic.clazz)
@@ -362,6 +377,26 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private val classSnsUiAction by dexClass {
+        matcher {
+            usingEqStrings(
+                "MicroMsg.SnsActivity",
+                "onAcvityResult requestCode:",
+                "KTouchCameraTime"
+            )
+        }
+    }
+
+    private val methodSnsUiActionOnActivityResult by dexMethod {
+        matcher {
+            declaredClass(classSnsUiAction.clazz)
+            paramCount(3)
+            paramTypes(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, android.content.Intent::class.java)
+            returnType(Void.TYPE)
+            usingEqStrings("onActivityResult", "com.tencent.mm.plugin.sns.ui.SnsUIAction")
+        }
+    }
+
     private val methodSnsUploadOnCreate by dexMethod {
         matcher {
             declaredClass(classSnsUploadUi.clazz)
@@ -412,10 +447,7 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
     override fun onEnable() {
         WeStartActivityApi.addListener(albumRepostDescriptionInjector)
         methodSnsUploadOnCreate.hookBefore {
-            val intent = thisObject.reflekt().firstMethod {
-                name = "getIntent"
-                parameters()
-            }.invoke() as? android.content.Intent ?: return@hookBefore
+            val intent = (thisObject as? Activity)?.intent ?: return@hookBefore
             injectPendingAlbumRepostText(intent, requireSnsUploadTarget = false)
         }
     }
@@ -858,10 +890,13 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
     suspend fun ensureVideoPaths(context: Context, content: MomentContent): ResolvedVideo? =
         withContext(Dispatchers.Main) {
             val nativeMedia = content.nativeMediaList.firstOrNull() ?: return@withContext null
-            fetchFinishedVideoPath(content.snsTableId, content.nativeMediaList) ?: run {
-                triggerVideoDownload(nativeMedia, content.snsTableId)
-                waitForFinishedVideoPath(content.snsTableId, content.nativeMediaList)
-            }
+            fetchFullVideoPath(content.snsTableId, content.nativeMediaList)
+                ?: fetchFinishedVideoPath(content.snsTableId, content.nativeMediaList)
+                ?: fetchUsableCachedVideoPath(context, content.nativeMediaList)
+                ?: run {
+                    triggerVideoDownload(nativeMedia, content.snsTableId)
+                    waitForVideoPath(context, content.snsTableId, content.nativeMediaList)
+                }
         }?.let { videoPath ->
             val thumbPath = fetchVideoThumbPath(content.nativeMediaList)
                 ?.takeIf { vfsFileExists(it) || java.io.File(it).isFile }
@@ -900,6 +935,41 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
         }.getOrElse {
             WeLogger.e(TAG, "failed to generate Moments video thumb", it)
             null
+        }
+    }
+
+    private fun isUsableVideoPath(context: Context, path: String): Boolean {
+        if (!(vfsFileExists(path) || java.io.File(path).isFile)) return false
+
+        val localVideo = if (java.io.File(path).isFile) {
+            null
+        } else {
+            val cacheDir = context.externalCacheDir ?: context.cacheDir
+            java.io.File(cacheDir, "wekit_moments_probe_${System.currentTimeMillis()}.mp4")
+        }
+        val sourcePath = localVideo?.let { file ->
+            if (!copyExistingFile(path, file.absolutePath)) return false
+            file.absolutePath
+        } ?: path
+
+        return runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(sourcePath)
+                val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                val usable = duration > 0L && width > 0 && height > 0
+                WeLogger.i(TAG, "probe Moments cached video: path=$path, duration=$duration, size=${width}x$height, usable=$usable")
+                usable
+            } finally {
+                retriever.release()
+                localVideo?.delete()
+            }
+        }.getOrElse {
+            localVideo?.delete()
+            WeLogger.e(TAG, "failed to probe Moments cached video: $path", it)
+            false
         }
     }
 
@@ -1016,7 +1086,7 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
         }
     }
 
-    fun openMomentVideoEditorFromAlbumResult(activity: Activity, text: String, videoPath: String): Boolean {
+    fun openMomentVideoEditorFromAlbumResult(activity: Activity, text: String, videoPath: String, source: Any? = null): Boolean {
         pendingAlbumRepostText.set(text)
         val resultIntent = android.content.Intent().apply {
             putStringArrayListExtra("key_select_video_list", arrayListOf(videoPath))
@@ -1024,14 +1094,58 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
             putExtra("key_extra_data", Bundle())
         }
         return runCatching {
-            val onActivityResult = findActivityResultMethod(activity)
-            onActivityResult.invoke(activity, 14, Activity.RESULT_OK, resultIntent)
+            val existingSnsUiAction = findSnsUiAction(source) ?: findSnsUiAction(activity)
+            val snsUiAction = existingSnsUiAction ?: createSnsUiAction(activity)
+            if (snsUiAction != null) {
+                methodSnsUiActionOnActivityResult.method.invoke(snsUiAction, 14, Activity.RESULT_OK, resultIntent)
+                WeLogger.i(
+                    TAG,
+                    "dispatched Moments album video result through ${if (existingSnsUiAction != null) "existing" else "new"} SnsUIAction: " +
+                        "activity=${activity.javaClass.name}, source=${source?.javaClass?.name}, action=${snsUiAction.javaClass.name}"
+                )
+            } else {
+                val onActivityResult = findActivityResultMethod(activity)
+                onActivityResult.invoke(activity, 14, Activity.RESULT_OK, resultIntent)
+                WeLogger.i(TAG, "dispatched Moments album video result through Activity: activity=${activity.javaClass.name}")
+            }
             true
         }.getOrElse {
             pendingAlbumRepostText.set(null)
             WeLogger.e(TAG, "failed to dispatch Moments album video result: $videoPath", it)
             false
         }
+    }
+
+    private fun createSnsUiAction(activity: Activity): Any? {
+        return runCatching {
+            classSnsUiAction.clazz
+                .getDeclaredConstructor(Activity::class.java)
+                .apply { isAccessible = true }
+                .newInstance(activity)
+        }.getOrElse {
+            WeLogger.e(TAG, "failed to create SnsUIAction for ${activity.javaClass.name}", it)
+            null
+        }
+    }
+
+    private fun findSnsUiAction(source: Any?): Any? =
+        findSnsUiAction(source, java.util.Collections.newSetFromMap(java.util.IdentityHashMap()), 0)
+
+    private fun findSnsUiAction(source: Any?, visited: MutableSet<Any>, depth: Int): Any? {
+        if (source == null || depth > 4 || !visited.add(source)) return null
+        if (classSnsUiAction.clazz.isAssignableFrom(source.javaClass)) return source
+
+        source.reflekt().firstFieldOrNull {
+            type { it isSubclassOf classSnsUiAction.clazz }
+            superclass()
+        }?.get()?.let { return it }
+
+        source.reflekt().fields().forEach { field ->
+            val value = runCatching { field.get() }.getOrNull() ?: return@forEach
+            if (value.javaClass.name.startsWith("java.") || value.javaClass.name.startsWith("android.")) return@forEach
+            findSnsUiAction(value, visited, depth + 1)?.let { return it }
+        }
+        return null
     }
 
     private fun findActivityResultMethod(activity: Activity): Method {
@@ -1138,6 +1252,36 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
         }
     }
 
+    private fun fetchUsableCachedVideoPath(context: Context, nativeMediaList: LinkedList<*>): String? {
+        val path = fetchVideoPath(nativeMediaList)?.takeIf { it.isNotBlank() } ?: return null
+        if (!isUsableVideoPath(context, path)) return null
+        val mediaId = nativeMediaList.firstOrNull()?.let { getNativeMediaId(it) }
+        WeLogger.i(TAG, "resolved usable cached Moments video: media=$mediaId, path=$path")
+        return path
+    }
+
+    fun fetchFullVideoPath(snsTableId: String?, nativeMediaList: LinkedList<*>): String? {
+        val nativeMediaObj = nativeMediaList.firstOrNull() ?: return null
+        return runCatching {
+            val tableId = snsTableId ?: getNativeMediaId(nativeMediaObj) ?: ""
+            val path = methodGetSnsVideoFullPath.method.invoke(null, tableId, nativeMediaObj) as? String
+            if (path.isNullOrEmpty() || !(vfsFileExists(path) || java.io.File(path).isFile)) {
+                val theoreticalPath = fetchVideoPath(nativeMediaList)
+                WeLogger.i(
+                    TAG,
+                    "Moments full video path missing: sns=$tableId, media=${getNativeMediaId(nativeMediaObj)}, full=$path, theoretical=$theoreticalPath, theoreticalExists=${theoreticalPath?.let { vfsFileExists(it) || java.io.File(it).isFile }}"
+                )
+                null
+            } else {
+                WeLogger.i(TAG, "resolved full Moments video: sns=$tableId, path=$path")
+                path
+            }
+        }.getOrElse {
+            WeLogger.e(TAG, "failed to get full moment video path", it)
+            null
+        }
+    }
+
     fun fetchFinishedVideoPath(snsTableId: String?, nativeMediaList: LinkedList<*>): String? {
         val nativeMediaObj = nativeMediaList.firstOrNull() ?: return null
         return runCatching {
@@ -1172,6 +1316,30 @@ object WeMomentsApi : ApiFeature(), IResolveDex {
             delay(intervalMs)
         }
         return fetchFinishedVideoPath(snsTableId, nativeMediaList)
+    }
+
+    private suspend fun waitForVideoPath(
+        context: Context,
+        snsTableId: String?,
+        nativeMediaList: LinkedList<*>,
+        timeoutMs: Long = 90_000,
+        intervalMs: Long = 500
+    ): String? {
+        val start = android.os.SystemClock.elapsedRealtime()
+        var nextProbeAt = start
+        while (android.os.SystemClock.elapsedRealtime() - start < timeoutMs) {
+            fetchFullVideoPath(snsTableId, nativeMediaList)?.let { return it }
+            fetchFinishedVideoPath(snsTableId, nativeMediaList)?.let { return it }
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now >= nextProbeAt) {
+                fetchUsableCachedVideoPath(context, nativeMediaList)?.let { return it }
+                nextProbeAt = now + 2_500
+            }
+            delay(intervalMs)
+        }
+        return fetchFullVideoPath(snsTableId, nativeMediaList)
+            ?: fetchFinishedVideoPath(snsTableId, nativeMediaList)
+            ?: fetchUsableCachedVideoPath(context, nativeMediaList)
     }
 
     fun fetchVideoThumbPath(nativeMediaList: LinkedList<*>): String? {

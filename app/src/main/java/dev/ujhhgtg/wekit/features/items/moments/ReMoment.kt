@@ -63,7 +63,16 @@ object ReMoment : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvider {
 
     private fun repostMoment(context: WeMomentsContextMenuApi.MomentsContext) {
         val activity = context.activity
-        val data = WeMomentsApi.getMomentContent(context.snsInfo, context.timelineObject) ?: return
+        val data = WeMomentsApi.getMomentContent(context.snsInfo, context.timelineObject)
+        if (data == null) {
+            WeLogger.w(
+                TAG,
+                "failed to resolve Moments content: activity=${activity.javaClass.name}, " +
+                    "snsInfo=${context.snsInfo?.javaClass?.name}, timeline=${context.timelineObject?.javaClass?.name}"
+            )
+            showToast(activity, "无法解析这条朋友圈内容")
+            return
+        }
         val contentText = data.contentText
 
         when (data.type) {
@@ -98,9 +107,8 @@ object ReMoment : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvider {
                         return@launch
                     }
                     WeLogger.i(TAG, "dispatch video album result: video=$albumVideoPath")
-                    if (!WeMomentsApi.openMomentVideoEditorFromAlbumResult(activity, contentText, albumVideoPath)) {
-                        showToastSuspend(activity, "视频自动选择失败, 已打开微信视频发布页")
-                        WeMomentsApi.sendVideoInUi(activity, albumVideoPath, video.thumbPath, contentText)
+                    if (!WeMomentsApi.openMomentVideoEditorFromAlbumResult(activity, contentText, albumVideoPath, context.source)) {
+                        showToastSuspend(activity, "视频自动选择失败")
                     }
                 }
             }
@@ -147,7 +155,16 @@ object ReMoment : SwitchFeature(), WeMomentsContextMenuApi.IMenuItemsProvider {
 
     private fun quickRepostMoment(context: WeMomentsContextMenuApi.MomentsContext) {
         val activity = context.activity
-        val data = WeMomentsApi.getMomentContent(context.snsInfo, context.timelineObject) ?: return
+        val data = WeMomentsApi.getMomentContent(context.snsInfo, context.timelineObject)
+        if (data == null) {
+            WeLogger.w(
+                TAG,
+                "failed to resolve Moments content for quick repost: activity=${activity.javaClass.name}, " +
+                    "snsInfo=${context.snsInfo?.javaClass?.name}, timeline=${context.timelineObject?.javaClass?.name}"
+            )
+            showToast(activity, "无法解析这条朋友圈内容")
+            return
+        }
 
         showToast(activity, "正在一键转发...")
 
