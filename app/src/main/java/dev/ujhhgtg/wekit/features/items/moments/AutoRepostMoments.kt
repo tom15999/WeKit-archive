@@ -395,7 +395,7 @@ object AutoRepostMoments : ClickableFeature(),
 
     private fun isIntercepted(snsInfo: Any): Boolean {
         val content = WeMomentsApi.getContentText(snsInfo) ?: return false
-        return content.contains(AntiMomentsDelete.INTERCEPT_MARK)
+        return content.contains(AntiMomentsDelete.INTERCEPT_MARKER)
     }
 
     private fun processSnsInfoAsync(snsInfo: Any, source: String) {

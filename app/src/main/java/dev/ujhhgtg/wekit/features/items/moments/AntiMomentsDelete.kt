@@ -7,12 +7,12 @@ import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.utils.WeLogger
 
-@Feature(name = "拦截朋友圈删除", categories = ["朋友圈"], description = "拦截他人朋友圈删除并添加标记")
+@Feature(name = "朋友圈防撤回", categories = ["朋友圈"], description = "拦截他人朋友圈删除并添加标记")
 object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListener {
 
     private const val TAG = "AntiMomentsDelete"
     private const val TBL_SNS_INFO = "SnsInfo"
-    const val INTERCEPT_MARK = "[拦截删除]"
+    const val INTERCEPT_MARKER = "[拦截删除]"
 
     override fun onUpdate(table: String, values: ContentValues, whereClause: String?, whereArgs: Array<String>?, conflictAlgorithm: Int) {
         try {
@@ -70,10 +70,10 @@ object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListene
             val currentVal = json.get(key)
 
             if (currentVal is String) {
-                if (currentVal.contains(INTERCEPT_MARK)) {
+                if (currentVal.contains(INTERCEPT_MARKER)) {
                     return false
                 }
-                val newVal = "$INTERCEPT_MARK $currentVal "
+                val newVal = "$INTERCEPT_MARKER $currentVal "
                 proto.setLenUtf8(fieldNumber, 0, newVal)
                 return true
             }

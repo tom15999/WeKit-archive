@@ -37,3 +37,5 @@ inline val BChar get() = Char::class.java
 inline val BString get() = String::class.java
 
 inline val StrArr get() = Array<String>::class.java
+
+inline val ObjArr get() = Array<Any>::class.java

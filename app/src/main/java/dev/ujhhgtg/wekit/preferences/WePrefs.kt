@@ -121,6 +121,7 @@ abstract class WePrefs protected constructor() : SharedPreferences, SharedPrefer
         fun remove(key: String) = default.remove(key)
 
         // -- Delegate properties --
+
         fun prefOption(key: String, default: String): ReadWriteProperty<Any?, String> =
             object : ReadWriteProperty<Any?, String> {
                 override fun getValue(thisRef: Any?, property: KProperty<*>): String =
