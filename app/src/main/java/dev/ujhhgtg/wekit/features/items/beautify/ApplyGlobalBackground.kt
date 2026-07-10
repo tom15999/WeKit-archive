@@ -51,6 +51,7 @@ import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.nul
+import java.util.WeakHashMap
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -153,27 +154,48 @@ object ApplyGlobalBackground : ClickableFeature(), IResolveDex {
             val view = thisObject as ImageView
             view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) {
-                    overlayFromContext(v.context)?.isVisible = false
-                    WeLogger.d(TAG, "hiding overlay")
+                    val activity = activityOf(v.context) ?: return
+                    synchronized(activityAttachedViews) {
+                        activityAttachedViews.getOrPut(activity) { mutableSetOf() }.add(v)
+                    }
+                    WeLogger.d(TAG, "view attached to ${activity.javaClass.simpleName}")
+                    overlayFromActivity(activity)?.isVisible = false
                 }
 
                 override fun onViewDetachedFromWindow(v: View) {
-                    overlayFromContext(v.context)?.isVisible = true
-                    WeLogger.d(TAG, "showing overlay")
+                    val activity = activityOf(v.context) ?: return
+                    val empty = synchronized(activityAttachedViews) {
+                        val set = activityAttachedViews[activity] ?: return
+                        set.remove(v)
+                        set.isEmpty()
+                    }
+                    if (empty) {
+                        WeLogger.d(TAG, "all views detached from ${activity.javaClass.simpleName}")
+                        overlayFromActivity(activity)?.isVisible = true
+                    }
                 }
             })
         }
     }
 
-    /** Walk the Context chain to find the hosting Activity's background overlay. */
-    private fun overlayFromContext(ctx: Context): ImageView? {
+    // Per-activity set of currently-attached MultiTouchImageViews.
+    // Using a Set means duplicate OnAttachStateChangeListener registrations (caused by
+    // t() being re-triggered via onMeasure after each setImageBitmap call on a recycled
+    // ViewPager page) are harmless: add/remove are idempotent on a Set, so the counter
+    // never goes negative regardless of how many listeners fire per attach/detach cycle.
+    private val activityAttachedViews = WeakHashMap<Activity, MutableSet<View>>()
+
+    private fun activityOf(ctx: Context): Activity? {
         var c = ctx
         while (c is android.content.ContextWrapper) {
-            if (c is Activity) return findOverlay(c.window?.decorView as? ViewGroup ?: return null)
+            if (c is Activity) return c
             c = c.baseContext
         }
         return null
     }
+
+    private fun overlayFromActivity(activity: Activity): ImageView? =
+        findOverlay(activity.window?.decorView as? ViewGroup ?: return null)
 
     private const val MIN = 0.01f
     private const val MAX = 0.80f
