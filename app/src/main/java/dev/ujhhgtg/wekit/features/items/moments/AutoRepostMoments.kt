@@ -251,8 +251,7 @@ object AutoRepostMoments : ClickableFeature(),
     }
 
     private fun processVisibleItems(list: ViewGroup) {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return
+        if (momentsUseWhitelist && momentsWhitelist.isEmpty()) return
         for (i in 0 until list.childCount) {
             runCatching {
                 locateSnsInfo(list.getChildAt(i))?.let { processSnsInfoAsync(it, "visible") }
@@ -279,10 +278,9 @@ object AutoRepostMoments : ClickableFeature(),
     }
 
     private fun scanCachedTargetMoments() {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return
+        if (momentsUseWhitelist && momentsWhitelist.isEmpty()) return
         thread(name = "ScanMomentsToAutoForwardThread") {
-            WeLogger.d(TAG, "scanCachedTargetMoments: scanning ${targets.size} targets")
+            WeLogger.d(TAG, "scanCachedTargetMoments: scanning (useWhitelist=$momentsUseWhitelist)")
             val snsIds = runCatching {
                 queryCachedTargetSnsIds()
             }.onFailure {
@@ -303,17 +301,27 @@ object AutoRepostMoments : ClickableFeature(),
     }
 
     private fun queryCachedTargetSnsIds(): List<Long> {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return emptyList()
+        val (userFilter, args) = if (momentsUseWhitelist) {
+            val whitelist = momentsWhitelist
+            if (whitelist.isEmpty()) return emptyList()
+            val placeholders = whitelist.joinToString(",") { "?" }
+            "AND userName IN ($placeholders)" to whitelist.map { it as Any }.toTypedArray()
+        } else {
+            val blacklist = momentsBlacklist
+            if (blacklist.isEmpty()) {
+                "" to emptyArray()
+            } else {
+                val placeholders = blacklist.joinToString(",") { "?" }
+                "AND userName NOT IN ($placeholders)" to blacklist.map { it as Any }.toTypedArray()
+            }
+        }
 
-        val placeholders = targets.joinToString(",") { "?" }
-        val args = targets.map { it as Any }.toTypedArray()
         val sql = """
             SELECT snsId
             FROM SnsInfo
-            WHERE userName IN ($placeholders)
-              AND snsId != 0
+            WHERE snsId != 0
               AND (sourceType = 0)
+              $userFilter
             ORDER BY createTime DESC
         """.trimIndent()
 
@@ -458,7 +466,7 @@ object AutoRepostMoments : ClickableFeature(),
 
     private fun isTarget(wxId: String): Boolean {
         if (wxId.isBlank()) return false
-        return if (momentsUseWhitelist) wxId in momentsWhitelist else wxId in momentsBlacklist
+        return if (momentsUseWhitelist) wxId in momentsWhitelist else wxId !in momentsBlacklist
     }
 
     // 持久化已转发集合, 防止重启后重复转发; 超出上限时丢弃最旧的部分

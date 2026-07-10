@@ -288,8 +288,9 @@ object AutoLikeMoments : ClickableFeature(),
     }
 
     private fun processVisibleItems(list: ViewGroup) {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return
+        // In whitelist mode, bail if the list is empty. In blacklist mode, an empty blacklist means
+        // "process everyone" so we must not bail.
+        if (momentsUseWhitelist && momentsWhitelist.isEmpty()) return
         for (i in 0 until list.childCount) {
             runCatching {
                 locateSnsInfo(list.getChildAt(i))?.let { processSnsInfoAsync(it, "visible") }
@@ -321,10 +322,9 @@ object AutoLikeMoments : ClickableFeature(),
     }
 
     private fun scanCachedTargetMoments() {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return
+        if (momentsUseWhitelist && momentsWhitelist.isEmpty()) return
         thread(name = "ScanMomentsToAutoLikeThread") {
-            WeLogger.d(TAG, "scanCachedTargetMoments: scanning ${targets.size} targets")
+            WeLogger.d(TAG, "scanCachedTargetMoments: scanning (useWhitelist=$momentsUseWhitelist)")
             val snsIds = runCatching {
                 queryCachedTargetSnsIds()
             }.onFailure {
@@ -346,23 +346,34 @@ object AutoLikeMoments : ClickableFeature(),
     }
 
     private fun queryCachedTargetSnsIds(): List<Long> {
-        val targets = if (momentsUseWhitelist) momentsWhitelist else momentsBlacklist
-        if (targets.isEmpty()) return emptyList()
-
-        val placeholders = targets.joinToString(",") { "?" }
-        val args = targets.map { it as Any }.toTypedArray()
         val likePredicate = if (currentAction == ACTION_UNLIKE) {
             "IFNULL(likeFlag, 0) != 0"
         } else {
             "IFNULL(likeFlag, 0) = 0"
         }
+
+        val (userFilter, args) = if (momentsUseWhitelist) {
+            val whitelist = momentsWhitelist
+            if (whitelist.isEmpty()) return emptyList()
+            val placeholders = whitelist.joinToString(",") { "?" }
+            "AND userName IN ($placeholders)" to whitelist.map { it as Any }.toTypedArray()
+        } else {
+            val blacklist = momentsBlacklist
+            if (blacklist.isEmpty()) {
+                "" to emptyArray()
+            } else {
+                val placeholders = blacklist.joinToString(",") { "?" }
+                "AND userName NOT IN ($placeholders)" to blacklist.map { it as Any }.toTypedArray()
+            }
+        }
+
         val sql = """
             SELECT snsId
             FROM SnsInfo
-            WHERE userName IN ($placeholders)
-              AND $likePredicate
+            WHERE $likePredicate
               AND snsId != 0
               AND (sourceType = 0)
+              $userFilter
             ORDER BY createTime DESC
         """.trimIndent()
 
@@ -531,12 +542,7 @@ object AutoLikeMoments : ClickableFeature(),
 
     private fun isTarget(wxId: String): Boolean {
         if (wxId.isBlank()) return false
-        if (momentsUseWhitelist) {
-            if (wxId !in momentsWhitelist) return false
-        } else {
-            if (wxId !in momentsBlacklist) return false
-        }
-        return true
+        return if (momentsUseWhitelist) wxId in momentsWhitelist else wxId !in momentsBlacklist
     }
 
     private var momentsUseWhitelist by WePrefs.prefOption("moments_use_whitelist", true)

@@ -96,48 +96,23 @@ pub unsafe extern "C" fn Java_dev_ujhhgtg_wekit_features_items_chat_MarkdownRend
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_mp3ToSilk(
+pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_anyToSilk(
     env: *mut RawJNIEnv,
     _thiz: jobject,
-    mp3_path: jstring,
+    any_path: jstring,
     silk_path: jstring,
 ) -> jboolean {
-    logi!("converting mp3 to silk...");
-    with_jstring(env, mp3_path, |mp3| {
+    logi!("converting any to silk...");
+    with_jstring(env, any_path, |any| {
         with_jstring(env, silk_path, |silk| {
-            logi!("converting {} to {}", mp3, silk);
-            match audio_utils::mp3_to_silk(mp3, silk) {
+            logi!("converting {} to {}", any, silk);
+            match audio_utils::any_to_silk(any, silk) {
                 Ok(_) => {
-                    logi!("mp3_to_silk succeeded");
+                    logi!("any_to_silk succeeded");
                     JNI_TRUE
                 }
                 Err(err) => {
-                    logi!("mp3_to_silk failed: {:?}", err);
-                    JNI_FALSE
-                }
-            }
-        })
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_wavToSilk(
-    env: *mut RawJNIEnv,
-    _thiz: jobject,
-    wav_path: jstring,
-    silk_path: jstring,
-) -> jboolean {
-    logi!("converting wav to silk...");
-    with_jstring(env, wav_path, |wav| {
-        with_jstring(env, silk_path, |silk| {
-            logi!("converting {} to {}", wav, silk);
-            match audio_utils::wav_to_silk(wav, silk) {
-                Ok(_) => {
-                    logi!("wav_to_silk succeeded");
-                    JNI_TRUE
-                }
-                Err(err) => {
-                    logi!("wav_to_silk failed: {:?}", err);
+                    logi!("any_to_silk failed: {:?}", err);
                     JNI_FALSE
                 }
             }

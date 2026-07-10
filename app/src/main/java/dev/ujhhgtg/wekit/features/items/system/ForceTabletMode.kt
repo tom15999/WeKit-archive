@@ -4,6 +4,9 @@ import android.content.Context
 import android.widget.Button
 import androidx.compose.material3.Text
 import androidx.core.view.isGone
+import androidx.core.view.isVisible
+import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.reflekt.utils.toClass
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -21,6 +24,11 @@ object ForceTabletMode : SwitchFeature(), IResolveDex {
             usingEqStrings("Lenovo TB-9707F", "eebbk")
         }
     }
+    private val methodIsTablet2 by dexMethod {
+        matcher {
+            usingEqStrings("MicroMsg.UIUtils", "isRoyoleFoldableDevice!!!")
+        }
+    }
     private val methodOtherDeviceLoginButtonIsVisible by dexMethod {
         matcher {
             usingEqStrings("loginAsOtherDeviceBtn")
@@ -32,9 +40,20 @@ object ForceTabletMode : SwitchFeature(), IResolveDex {
             result = true
         }
 
+        methodIsTablet2.hookBefore {
+            result = true
+        }
+
         methodOtherDeviceLoginButtonIsVisible.hookBefore {
             val view = args[0] as? Button? ?: return@hookBefore
-            if (view.isGone) view.isGone = false
+            if (view.isGone) view.isVisible = true
+        }
+
+        "com.tencent.mm.plugin.account.ui.LoginHistoryUI".toClass().reflekt().firstMethod("initView").hookAfter {
+            val btn = thisObject.reflekt().firstField {
+                type = Button::class
+            }.get()!! as Button
+            btn.isVisible = true
         }
     }
 

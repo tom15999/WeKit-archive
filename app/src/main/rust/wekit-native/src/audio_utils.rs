@@ -17,6 +17,7 @@ use crate::{loge, logi};
 pub fn any_to_pcm_mono(path: &str) -> Result<(Vec<i16>, u32)> {
     let file = Box::new(File::open(path)?);
     let mss = MediaSourceStream::new(file, Default::default());
+
     // Let symphonia auto-detect the real container.
     let mut hint = Hint::new();
     if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
@@ -179,21 +180,8 @@ pub fn pcm_bytes_to_silk(pcm: &[i16], mut out: impl Write) -> Result<()> {
     Ok(())
 }
 
-pub fn mp3_to_silk(mp3_path: &str, silk_path: &str) -> Result<()> {
+pub fn any_to_silk(mp3_path: &str, silk_path: &str) -> Result<()> {
     let (pcm, src_rate) = any_to_pcm_mono(mp3_path)?;
-    logi!("any_to_pcm_mono done");
-    let pcm = resample_to(&pcm, src_rate, 24000);
-    logi!("resample_to done");
-    let out_file = File::create(silk_path)?;
-    pcm_bytes_to_silk(&pcm, out_file)?;
-    logi!("encode_to_silk done");
-    Ok(())
-}
-
-pub fn wav_to_silk(wav_path: &str, silk_path: &str) -> Result<()> {
-    // `mp3_to_pcm_mono` probes the container instead of trusting the extension,
-    // so it decodes WAV (PCM) just as well as MP3 — reuse it verbatim.
-    let (pcm, src_rate) = any_to_pcm_mono(wav_path)?;
     logi!("any_to_pcm_mono done");
     let pcm = resample_to(&pcm, src_rate, 24000);
     logi!("resample_to done");

@@ -48,6 +48,7 @@ import dev.ujhhgtg.wekit.features.api.net.WePacketHelper
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
+import dev.ujhhgtg.wekit.features.items.chat.ChatInputBarEnhancements.ttsVoice
 import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
@@ -398,7 +399,7 @@ private fun selectAndSendVoice(context: Context, currentConv: String) {
                     }
                 }
                 val mimeType = contentResolver.getType(uri) ?: return@launch
-                val isSilk = mimeType == "audio/amr"
+                val isSilk = mimeType in setOf("audio/amr", "audio/silk")
                 showToastSuspend("语音文件准备完成")
                 val durationMs = AudioUtils.getDurationMs(tempPath.absolutePathString())
 
@@ -434,7 +435,7 @@ private fun selectAndSendVoice(context: Context, currentConv: String) {
                                     } else {
                                         showToast("正在将 MP3 转换为 SILK...")
                                         val tempSilkPath = KnownPaths.moduleCache / "voice_conv_tmp"
-                                        val convSuccess = AudioUtils.mp3ToSilk(
+                                        val convSuccess = AudioUtils.anyToSilk(
                                             tempPath.absolutePathString(),
                                             tempSilkPath.absolutePathString()
                                         )
@@ -460,7 +461,15 @@ private fun selectAndSendVoice(context: Context, currentConv: String) {
             }
         }
         // android couldn't distinguish AMR-extension SILK files, so we just use amr here
-        importLauncher.launch(arrayOf("audio/amr", "audio/mpeg"))
+        importLauncher.launch(arrayOf(
+            "audio/mpeg",
+            "audio/amr",
+            "audio/x-wav",
+            "audio/wav",
+            "audio/mp4",
+            "audio/x-m4a",
+            "application/octet-stream"
+        ))
     }
 }
 
@@ -488,7 +497,7 @@ private fun synthesizeAndSendVoice(
             val durationMs = AudioUtils.getDurationMs(mp3Path.absolutePathString())
             showToastSuspend("合成成功, 正在转换并发送...")
 
-            val convSuccess = AudioUtils.mp3ToSilk(
+            val convSuccess = AudioUtils.anyToSilk(
                 mp3Path.absolutePathString(),
                 silkPath.absolutePathString(),
             )

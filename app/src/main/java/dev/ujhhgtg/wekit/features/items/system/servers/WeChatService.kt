@@ -399,7 +399,7 @@ object WeChatService {
 
     fun audioMp3ToSilk(srcPath: String, destPath: String): Result<Unit> =
         runCatching {
-            AudioUtils.mp3ToSilk(srcPath, destPath)
+            AudioUtils.anyToSilk(srcPath, destPath)
             Result.Success(Unit)
         }.getOrElse { Result.Error(it.message ?: "Failed to convert mp3 to silk") }
 

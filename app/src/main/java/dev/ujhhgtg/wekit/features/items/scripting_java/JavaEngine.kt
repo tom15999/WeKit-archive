@@ -254,17 +254,17 @@ object JavaEngine {
             setMethod(BshMethod(
                 "mp3ToSilk", arrayOf(BString, BString, int)
             ) {
-                AudioUtils.mp3ToSilk(it[0] as String, it[1] as String)
+                AudioUtils.anyToSilk(it[0] as String, it[1] as String)
             })
             setMethod(BshMethod(
                 "mp3ToSilk", arrayOf(BString, BString)
             ) {
-                AudioUtils.mp3ToSilk(it[0] as String, it[1] as String)
+                AudioUtils.anyToSilk(it[0] as String, it[1] as String)
             })
             setMethod(BshMethod(
                 "wavToSilk", arrayOf(BString, BString)
             ) {
-                AudioUtils.wavToSilk(it[0] as String, it[1] as String)
+                AudioUtils.anyToSilk(it[0] as String, it[1] as String)
             })
             setMethod(BshMethod(
                 "silkToMp3", arrayOf(BString, BString, int)

@@ -396,6 +396,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 }
                 temporarilyShown = true
                 showToast(chatFooter.context, "已临时显示所有隐藏的联系人, 输入 #hide 恢复隐藏")
+                WeConversationApi.reloadConversations()
             }
 
             "#hide" -> {
@@ -406,6 +407,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
                 }
                 temporarilyShown = false
                 showToast(chatFooter.context, "已恢复隐藏联系人")
+                WeConversationApi.reloadConversations()
             }
         }
     }
