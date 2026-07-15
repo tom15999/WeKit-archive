@@ -12,9 +12,7 @@ enum class ModelProviderType {
     OPENAI_RESPONSES,
     ANTHROPIC_MESSAGES,
     GEMINI_GENERATE_CONTENT,
-    GEMINI_INTERACTIONS,
-    /** WeKit official router. Base URL is hardcoded; users only supply an API key. */
-    WEKIT_ROUTER,
+    GEMINI_INTERACTIONS
 }
 
 @Entity(tableName = "model_providers")

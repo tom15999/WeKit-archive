@@ -8,20 +8,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.ujhhgtg.wekit.agent.data.WeAgentRepository
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderEntity
 import dev.ujhhgtg.wekit.agent.data.entity.ModelProviderType
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import java.util.UUID
-import dev.ujhhgtg.wekit.utils.openInSystem
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -30,8 +29,8 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
+import java.util.UUID
 
 /** Lists model providers; opens each for editing; adds a new one via dialog (§5.1/§5.2). */
 @Composable
@@ -49,11 +48,10 @@ fun ModelProvidersScreen(
         }
         items(providers.size, key = { providers[it].id }) { i ->
             val p = providers[i]
-            val isBuiltin = p.id == dev.ujhhgtg.wekit.agent.model.ModelProviderManager.WEKIT_ROUTER_BUILTIN_ID
             Card(Modifier.padding(bottom = 6.dp)) {
                 ArrowPreference(
                     title = p.name.ifBlank { p.baseUrl },
-                    summary = if (isBuiltin) "${p.type.label()} · 内置" else "${p.type.label()} · ${p.baseUrl}",
+                    summary = "${p.type.label()} · ${p.baseUrl}",
                     onClick = { onOpenProvider(p.id) },
                 )
             }
@@ -89,27 +87,22 @@ private fun AddProviderDialog(
     var name by remember(show.value) { mutableStateOf("") }
     var baseUrl by remember(show.value) { mutableStateOf("https://api.openai.com/v1") }
     var apiKey by remember(show.value) { mutableStateOf("") }
-    var typeIndex by remember(show.value) { mutableStateOf(0) }
+    var typeIndex by remember(show.value) { mutableIntStateOf(0) }
     val types = listOf(
         ModelProviderType.OPENAI_CHAT_COMPLETION,
         ModelProviderType.OPENAI_RESPONSES,
         ModelProviderType.ANTHROPIC_MESSAGES,
         ModelProviderType.GEMINI_GENERATE_CONTENT,
-        ModelProviderType.GEMINI_INTERACTIONS,
-        // WEKIT_ROUTER is a built-in provider seeded automatically — users cannot add it manually.
+        ModelProviderType.GEMINI_INTERACTIONS
     )
     val selectedType = types[typeIndex]
-    val isWekitRouter = selectedType == ModelProviderType.WEKIT_ROUTER
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     WindowDialog(show = show.value, title = "添加模型提供方", onDismissRequest = { show.value = false }) {
         Column {
             TextField(value = name, onValueChange = { name = it }, label = "名称", useLabelAsPlaceholder = true)
             Spacer(Modifier.height(8.dp))
-            if (!isWekitRouter) {
-                TextField(value = baseUrl, onValueChange = { baseUrl = it }, label = "Base URL", useLabelAsPlaceholder = true, singleLine = true)
-                Spacer(Modifier.height(8.dp))
-            }
+            TextField(value = baseUrl, onValueChange = { baseUrl = it }, label = "Base URL", useLabelAsPlaceholder = true, singleLine = true)
+            Spacer(Modifier.height(8.dp))
             TextField(value = apiKey, onValueChange = { apiKey = it }, label = "API Key", useLabelAsPlaceholder = true, singleLine = true)
             Spacer(Modifier.height(8.dp))
             WindowDropdownPreference(
@@ -118,17 +111,6 @@ private fun AddProviderDialog(
                 selectedIndex = typeIndex,
                 onSelectedIndexChange = { typeIndex = it },
             )
-            if (isWekitRouter) {
-                Spacer(Modifier.height(4.dp))
-                TextButton(
-                    text = "访问 wekit.pro 了解更多",
-                    onClick = {
-                        android.net.Uri.parse("https://wekit.pro")
-                            .openInSystem(context, useCustomTabs = true)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth()) {
                 TextButton(text = "取消", onClick = { show.value = false }, modifier = Modifier.weight(1f))
@@ -136,11 +118,10 @@ private fun AddProviderDialog(
                 TextButton(
                     text = "添加",
                     onClick = {
-                        val effectiveBaseUrl = if (isWekitRouter) dev.ujhhgtg.wekit.agent.model.ModelProviderManager.WEKIT_ROUTER_BASE_URL else baseUrl
-                        onConfirm(name.ifBlank { selectedType.label() }, selectedType, effectiveBaseUrl, apiKey)
+                        onConfirm(name.ifBlank { selectedType.label() }, selectedType, baseUrl, apiKey)
                         show.value = false
                     },
-                    enabled = if (isWekitRouter) apiKey.isNotBlank() else baseUrl.isNotBlank(),
+                    enabled = baseUrl.isNotBlank(),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     modifier = Modifier.weight(1f),
                 )
@@ -155,5 +136,4 @@ fun ModelProviderType.label(): String = when (this) {
     ModelProviderType.ANTHROPIC_MESSAGES -> "Anthropic Messages"
     ModelProviderType.GEMINI_GENERATE_CONTENT -> "Gemini generateContent (legacy)"
     ModelProviderType.GEMINI_INTERACTIONS -> "Gemini Interactions"
-    ModelProviderType.WEKIT_ROUTER -> "WeKit Router"
 }

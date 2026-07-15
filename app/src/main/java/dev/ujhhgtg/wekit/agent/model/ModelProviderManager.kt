@@ -69,12 +69,6 @@ object ModelProviderManager {
 
         ModelProviderType.GEMINI_INTERACTIONS ->
             GeminiInteractionsClient(httpClient, provider.baseUrl.trimEnd('/'), provider.apiKey)
-
-        // WeKit Router uses the OpenAI Chat Completions wire format. The base URL is always the
-        // hardcoded [WEKIT_ROUTER_BASE_URL] regardless of what is stored in the entity — this
-        // ensures the correct endpoint even if the stored value predates a URL change.
-        ModelProviderType.WEKIT_ROUTER ->
-            OpenAiChatCompletionsClient(httpClient, WEKIT_ROUTER_BASE_URL, provider.apiKey)
     }
 
     /**
@@ -127,8 +121,7 @@ object ModelProviderManager {
         val isGemini = provider.type == ModelProviderType.GEMINI_GENERATE_CONTENT
             || provider.type == ModelProviderType.GEMINI_INTERACTIONS
         // WeKit Router always uses its hardcoded base URL.
-        val resolvedBase = if (provider.type == ModelProviderType.WEKIT_ROUTER) WEKIT_ROUTER_BASE_URL
-                           else provider.baseUrl.trimEnd('/')
+        val resolvedBase = provider.baseUrl.trimEnd('/')
         val endpoint = "$resolvedBase/models"
         return runCatching {
             val resp = httpClient.get(endpoint) {
@@ -165,17 +158,4 @@ object ModelProviderManager {
             }
         }
     }
-
-    /**
-     * Fixed id for the built-in WeKit Router provider row in the Room database.
-     */
-    const val WEKIT_ROUTER_BUILTIN_ID = "wekit_router_builtin"
-
-    /**
-     * OpenAI-compatible base URL for the WeKit Router LLM endpoint.
-     * [OpenAiChatCompletionsClient] appends `/chat/completions` to this, resulting in
-     * `https://api.wekit.pro/v1/chat/completions`.
-     */
-    const val WEKIT_ROUTER_BASE_URL = "https://api.wekit.pro/v1"
-
 }
