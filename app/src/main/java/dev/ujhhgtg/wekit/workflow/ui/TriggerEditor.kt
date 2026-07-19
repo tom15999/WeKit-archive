@@ -363,33 +363,33 @@ fun TriggerContextHint(trigger: WorkflowTrigger?) {
     // Re-show the hint each time the trigger type changes.
     key(triggerToIndex(trigger)) {
         var dismissed by remember { mutableStateOf(false) }
-        if (dismissed) return@key
-
-        Card(modifier = Modifier.padding(bottom = 6.dp)) {
-            Column(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp)) {
-                SmallTitle("可用变量")
-                vars.forEach { v ->
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
-                        Text(
-                            text = v.name,
-                            fontFamily = FontFamily.Monospace,
-                        )
-                        Text(
-                            text = v.description,
-                            style = top.yukonga.miuix.kmp.theme.MiuixTheme.textStyles.subtitle,
-                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackgroundVariant,
-                        )
+        if (!dismissed) {
+            Card(modifier = Modifier.padding(bottom = 6.dp)) {
+                Column(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp)) {
+                    SmallTitle("可用变量")
+                    vars.forEach { v ->
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
+                            Text(
+                                text = v.name,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Text(
+                                text = v.description,
+                                style = top.yukonga.miuix.kmp.theme.MiuixTheme.textStyles.subtitle,
+                                color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackgroundVariant,
+                            )
+                        }
+                        Spacer(Modifier.height(2.dp))
                     }
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        text = "知道了",
+                        onClick = { dismissed = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                    )
                 }
-                Spacer(Modifier.height(4.dp))
-                TextButton(
-                    text = "知道了",
-                    onClick = { dismissed = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp),
-                )
             }
         }
     }
