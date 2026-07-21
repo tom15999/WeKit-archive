@@ -132,21 +132,6 @@ fun PanelHistorySetting(
 }
 
 @Composable
-fun PanelSortSetting(
-    newestFirst: Boolean,
-    onValueChange: (Boolean) -> Unit,
-) {
-    ListItem(
-        colors = panelListItemColors(),
-        headlineContent = { Text("按修改时间排序") },
-        supportingContent = { Text(if (newestFirst) "最新优先" else "按名称") },
-        trailingContent = {
-            Switch(checked = newestFirst, onCheckedChange = onValueChange)
-        },
-    )
-}
-
-@Composable
 fun PanelFunBoxApiClientIdSetting(onClick: () -> Unit) {
     val current = PanelSettings.effectiveFunBoxApiClientWxId
     ListItem(
@@ -292,8 +277,6 @@ fun LazyListScope.panelCollectionSettings(
     maxHistory: Long,
     onMaxHistoryChange: (Long) -> Unit,
     onCustomHistory: () -> Unit,
-    newestFirst: Boolean,
-    onNewestFirstChange: (Boolean) -> Unit,
     autoClose: Boolean,
     onAutoCloseChange: (Boolean) -> Unit,
 ) {
@@ -302,12 +285,6 @@ fun LazyListScope.panelCollectionSettings(
             value = maxHistory,
             onValueChange = onMaxHistoryChange,
             onCustomValue = onCustomHistory,
-        )
-    }
-    item {
-        PanelSortSetting(
-            newestFirst = newestFirst,
-            onValueChange = onNewestFirstChange,
         )
     }
     item {

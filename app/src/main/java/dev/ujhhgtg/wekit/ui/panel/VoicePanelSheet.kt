@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -54,6 +55,7 @@ import com.composables.icons.materialsymbols.outlined.Close
 import com.composables.icons.materialsymbols.outlined.Cloud
 import com.composables.icons.materialsymbols.outlined.Delete
 import com.composables.icons.materialsymbols.outlined.Download
+import com.composables.icons.materialsymbols.outlined.Drag_handle
 import com.composables.icons.materialsymbols.outlined.Edit
 import com.composables.icons.materialsymbols.outlined.Folder
 import com.composables.icons.materialsymbols.outlined.History
@@ -71,6 +73,7 @@ import com.composables.icons.materialsymbols.outlined.Text_to_speech
 import com.composables.icons.materialsymbols.outlined.Upload_file
 import dev.ujhhgtg.wekit.features.items.chat.panel.CloneExample
 import dev.ujhhgtg.wekit.features.items.chat.panel.CloneVoice
+import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
 import dev.ujhhgtg.wekit.features.items.chat.panel.PANEL_BULK_DOWNLOAD_CONCURRENCY
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelUiState
@@ -108,6 +111,12 @@ data class VoicePanelActions(
     val renameLocalPack: suspend (String, String) -> Result<Unit> = { _, _ -> Result.failure(UnsupportedOperationException()) },
     val deleteLocalPack: suspend (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
     val deleteLocalVoices: suspend (List<String>) -> Result<Int> = {
+        Result.failure(UnsupportedOperationException())
+    },
+    val savePackOrder: suspend (List<String>) -> Result<Unit> = {
+        Result.failure(UnsupportedOperationException())
+    },
+    val saveItemOrder: suspend (String, List<String>) -> Result<Unit> = { _, _ ->
         Result.failure(UnsupportedOperationException())
     },
     val preview: suspend (VoiceItem) -> Result<VoicePreview> = { Result.failure(UnsupportedOperationException()) },
@@ -159,6 +168,11 @@ data class VoicePanelActions(
 enum class VoiceImportMode {
     MULTIPLE_FILES,
     DIRECTORY,
+}
+
+private enum class VoiceReorderTarget {
+    PACKS,
+    ITEMS,
 }
 
 fun showVoicePanelSheet(
@@ -269,6 +283,11 @@ private fun VoicePanelContent(
     var examplesRequest by remember { mutableIntStateOf(0) }
     var localRequest by remember { mutableIntStateOf(0) }
     var recentMostUsed by remember { mutableStateOf(PanelSettings.voiceRecentSortMode == 1) }
+    var localPackSortMode by remember { mutableStateOf(PanelSettings.voicePackSortMode) }
+    var localItemSortMode by remember { mutableStateOf(PanelSettings.voiceItemSortMode) }
+    var reorderTarget by remember { mutableStateOf<VoiceReorderTarget?>(null) }
+    var reorderPackId by remember { mutableStateOf<String?>(null) }
+    var reorderKeys by remember { mutableStateOf<List<String>>(emptyList()) }
     var batchMode by remember { mutableStateOf(false) }
     var selectedDownloadIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var onlineSaveProgress by remember { mutableStateOf<PanelSaveProgress?>(null) }
@@ -720,7 +739,79 @@ private fun VoicePanelContent(
         }
     }
 
-    val panelActions = if (batchMode) {
+    fun cancelReorder() {
+        reorderTarget = null
+        reorderPackId = null
+        reorderKeys = emptyList()
+    }
+
+    fun changeLocalSortMode(target: VoiceReorderTarget, mode: LocalSortMode) {
+        when (target) {
+            VoiceReorderTarget.PACKS -> {
+                localPackSortMode = mode
+                PanelSettings.voicePackSortMode = mode
+                if (mode == LocalSortMode.CUSTOM && !PanelSettings.voicePackCustomSortHintShown) {
+                    PanelSettings.voicePackCustomSortHintShown = true
+                    scope.launch { showToastSuspend(context, "长按「自定义」字样开始排序") }
+                }
+            }
+
+            VoiceReorderTarget.ITEMS -> {
+                localItemSortMode = mode
+                PanelSettings.voiceItemSortMode = mode
+                if (mode == LocalSortMode.CUSTOM && !PanelSettings.voiceItemCustomSortHintShown) {
+                    PanelSettings.voiceItemCustomSortHintShown = true
+                    scope.launch { showToastSuspend(context, "长按「自定义」字样开始排序") }
+                }
+            }
+        }
+        refreshLocal()
+    }
+
+    fun startReorder(target: VoiceReorderTarget) {
+        when (target) {
+            VoiceReorderTarget.PACKS -> {
+                if (editableLocalPacks.isEmpty()) return
+                reorderPackId = null
+                reorderKeys = editableLocalPacks.map(VoicePack::id)
+            }
+
+            VoiceReorderTarget.ITEMS -> {
+                val pack = selectedLocal ?: return
+                val paths = pack.items.mapNotNull(VoiceItem::localPath)
+                if (paths.isEmpty()) return
+                reorderPackId = pack.id
+                reorderKeys = paths
+            }
+        }
+        reorderTarget = target
+    }
+
+    fun saveReorder() {
+        val target = reorderTarget ?: return
+        val requested = reorderKeys
+        val packId = reorderPackId
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                when (target) {
+                    VoiceReorderTarget.PACKS -> actions.savePackOrder(requested)
+                    VoiceReorderTarget.ITEMS -> packId?.let { actions.saveItemOrder(it, requested) }
+                        ?: Result.failure(IllegalStateException("未选择语音包"))
+                }
+            }
+            if (result.isSuccess) {
+                cancelReorder()
+                refreshLocal()
+                operationMessage = "已保存自定义顺序"
+            } else {
+                operationMessage = result.exceptionOrNull()?.message ?: "保存排序失败"
+            }
+        }
+    }
+
+    val panelActions = if (reorderTarget != null) {
+        panelReorderActions(::cancelReorder, ::saveReorder)
+    } else if (batchMode) {
         panelMultiSelectActions(
             items = batchCandidates,
             selectedKeys = selectedDownloadIds,
@@ -739,10 +830,18 @@ private fun VoicePanelContent(
         )
     } else when (destination) {
         VoiceDestination.LOCAL -> if (localCatalogVisible) {
-            listOf(
-                PanelAction(MaterialSymbols.Outlined.Add, "新建语音包") { prompt = VoicePrompt.CreateLocalPack },
-                PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal),
-            )
+            buildList {
+                add(PanelAction(MaterialSymbols.Outlined.Add, "新建语音包") { prompt = VoicePrompt.CreateLocalPack })
+                add(PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal))
+                add(
+                    panelLocalSortAction(
+                        mode = localPackSortMode,
+                        enabled = editableLocalPacks.isNotEmpty(),
+                        onModeChange = { changeLocalSortMode(VoiceReorderTarget.PACKS, it) },
+                        onStartCustomOrder = { startReorder(VoiceReorderTarget.PACKS) },
+                    ),
+                )
+            }
         } else buildList {
             if (localPackLayout == VoicePackLayout.LIST) {
                 add(PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") { localPackDetailId = null })
@@ -765,6 +864,14 @@ private fun VoicePanelContent(
                 })
             }
             add(PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal))
+            add(
+                panelLocalSortAction(
+                    mode = localItemSortMode,
+                    enabled = !selectedLocal?.items.isNullOrEmpty(),
+                    onModeChange = { changeLocalSortMode(VoiceReorderTarget.ITEMS, it) },
+                    onStartCustomOrder = { startReorder(VoiceReorderTarget.ITEMS) },
+                ),
+            )
         }
 
         VoiceDestination.SEARCH -> emptyList()
@@ -834,10 +941,14 @@ private fun VoicePanelContent(
             selected = destination,
             title = title,
             actions = panelActions,
-            onSelect = { destination = it },
+            onSelect = {
+                if (reorderTarget == null) destination = it
+            },
             onDismiss = onDismiss,
             onBack = {
                 when {
+                    reorderTarget != null -> cancelReorder()
+
                     batchMode -> {
                         batchMode = false
                         selectedDownloadIds = emptySet()
@@ -880,7 +991,22 @@ private fun VoicePanelContent(
             }) else null,
         ) {
             CompositionLocalProvider(LocalVoiceDurationOverrides provides resolvedDurations) {
-                when (destination) {
+                when (reorderTarget) {
+                    VoiceReorderTarget.PACKS -> VoicePackReorderContent(
+                        packs = reorderKeys.mapNotNull { key ->
+                            editableLocalPacks.firstOrNull { it.id == key }
+                        },
+                        onMove = { from, to -> reorderKeys = reorderKeys.moveItem(from, to) },
+                    )
+
+                    VoiceReorderTarget.ITEMS -> VoiceItemReorderContent(
+                        voices = reorderKeys.mapNotNull { key ->
+                            selectedLocal?.items?.firstOrNull { it.localPath == key }
+                        },
+                        onMove = { from, to -> reorderKeys = reorderKeys.moveItem(from, to) },
+                    )
+
+                    null -> when (destination) {
                     VoiceDestination.RECENT -> if (recent == null || recent.items.isEmpty()) {
                         PanelEmptyAction("还没有发送过语音")
                     } else {
@@ -1079,6 +1205,7 @@ private fun VoicePanelContent(
                             PanelSettings.localVoicePackLayout = it
                         },
                     )
+                    }
                 }
             }
         }
@@ -1472,6 +1599,85 @@ private fun LocalVoiceContent(
 }
 
 @Composable
+private fun VoicePackReorderContent(
+    packs: List<VoicePack>,
+    onMove: (Int, Int) -> Unit,
+) {
+    PanelReorderableList(
+        items = packs,
+        itemKey = VoicePack::id,
+        onMove = onMove,
+        modifier = Modifier.fillMaxSize(),
+    ) { pack, dragHandleModifier ->
+        ListItem(
+            colors = panelListItemColors(),
+            headlineContent = {
+                Text(pack.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            supportingContent = { Text("${pack.itemCount} 条语音") },
+            leadingContent = { Icon(MaterialSymbols.Outlined.Folder, null) },
+            trailingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .then(dragHandleModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        MaterialSymbols.Outlined.Drag_handle,
+                        contentDescription = "拖动 ${pack.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun VoiceItemReorderContent(
+    voices: List<VoiceItem>,
+    onMove: (Int, Int) -> Unit,
+) {
+    PanelReorderableList(
+        items = voices,
+        itemKey = { requireNotNull(it.localPath) },
+        onMove = onMove,
+        modifier = Modifier.fillMaxSize(),
+    ) { voice, dragHandleModifier ->
+        ListItem(
+            colors = panelListItemColors(),
+            headlineContent = {
+                Text(voice.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            supportingContent = {
+                Text(
+                    buildList {
+                        if (voice.durationMs > 0) add(formatDuration(voice.durationMs))
+                        add("已发送 ${voice.sendCount} 次")
+                    }.joinToString(" · "),
+                )
+            },
+            leadingContent = { Icon(MaterialSymbols.Outlined.Mic, null) },
+            trailingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .then(dragHandleModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        MaterialSymbols.Outlined.Drag_handle,
+                        contentDescription = "拖动 ${voice.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
 private fun VoiceSearchContent(
     packs: List<VoicePack>,
     query: String,
@@ -1723,7 +1929,6 @@ private fun VoiceSettingsContent(
     onLocalPackLayoutChange: (VoicePackLayout) -> Unit,
 ) {
     var maxHistory by remember { mutableLongStateOf(PanelSettings.voiceMaxHistory.coerceAtLeast(1L)) }
-    var sortType by remember { mutableIntStateOf(PanelSettings.voiceSortType) }
     var autoClose by remember { mutableStateOf(PanelSettings.voiceAutoClose) }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var historyPrompt by remember { mutableStateOf(false) }
@@ -1748,11 +1953,6 @@ private fun VoiceSettingsContent(
                     PanelSettings.voiceMaxHistory = it
                 },
                 onCustomHistory = { historyPrompt = true },
-                newestFirst = sortType == 1,
-                onNewestFirstChange = {
-                    sortType = if (it) 1 else 0
-                    PanelSettings.voiceSortType = sortType
-                },
                 autoClose = autoClose,
                 onAutoCloseChange = {
                     autoClose = it

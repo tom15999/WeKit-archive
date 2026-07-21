@@ -12,8 +12,16 @@ object PanelSettings {
     var voiceMaxHistory by prefOption("voice_panel_max_history", 50L)
     var stickerRecentSortMode by prefOption("sticker_panel_recent_sort_mode", 0)
     var voiceRecentSortMode by prefOption("voice_panel_recent_sort_mode", 0)
-    var stickerSortType by prefOption("sticker_panel_sort_type", 0)
-    var voiceSortType by prefOption("voice_panel_sort_type", 0)
+    private var legacyStickerSortType by prefOption("sticker_panel_sort_type", 0)
+    private var legacyVoiceSortType by prefOption("voice_panel_sort_type", 0)
+    private var stickerPackSortModeValue by prefOption("sticker_panel_pack_sort_mode", "")
+    private var stickerItemSortModeValue by prefOption("sticker_panel_item_sort_mode", "")
+    private var voicePackSortModeValue by prefOption("voice_panel_pack_sort_mode", "")
+    private var voiceItemSortModeValue by prefOption("voice_panel_item_sort_mode", "")
+    var stickerPackCustomSortHintShown by prefOption("sticker_panel_pack_custom_sort_hint_shown", false)
+    var stickerItemCustomSortHintShown by prefOption("sticker_panel_item_custom_sort_hint_shown", false)
+    var voicePackCustomSortHintShown by prefOption("voice_panel_pack_custom_sort_hint_shown", false)
+    var voiceItemCustomSortHintShown by prefOption("voice_panel_item_custom_sort_hint_shown", false)
     var stickerAutoClose by prefOption("sticker_panel_auto_close", true)
     var voiceAutoClose by prefOption("voice_panel_auto_close", true)
     private var legacyOnlineStickerPacksUseList by prefOption("sticker_panel_online_packs_use_list", false)
@@ -53,6 +61,30 @@ object PanelSettings {
             localVoicePackLayoutValue = value.name
         }
 
+    var stickerPackSortMode: LocalSortMode
+        get() = sortMode(stickerPackSortModeValue, legacyStickerSortType)
+        set(value) {
+            stickerPackSortModeValue = value.name
+        }
+
+    var stickerItemSortMode: LocalSortMode
+        get() = sortMode(stickerItemSortModeValue, legacyStickerSortType)
+        set(value) {
+            stickerItemSortModeValue = value.name
+        }
+
+    var voicePackSortMode: LocalSortMode
+        get() = sortMode(voicePackSortModeValue, legacyVoiceSortType)
+        set(value) {
+            voicePackSortModeValue = value.name
+        }
+
+    var voiceItemSortMode: LocalSortMode
+        get() = sortMode(voiceItemSortModeValue, legacyVoiceSortType)
+        set(value) {
+            voiceItemSortModeValue = value.name
+        }
+
     val effectiveFunBoxApiClientWxId: String
         get() = funBoxApiClientWxId.takeIf(::isValidFunBoxApiClientWxId)
             ?: DEFAULT_FUNBOX_API_CLIENT_WXID
@@ -68,6 +100,10 @@ object PanelSettings {
 
     fun isValidTelegramBotToken(value: String): Boolean =
         TELEGRAM_BOT_TOKEN_REGEX.matches(value.trim())
+
+    private fun sortMode(value: String, legacyValue: Int): LocalSortMode =
+        LocalSortMode.entries.firstOrNull { it.name == value }
+            ?: if (legacyValue == 1) LocalSortMode.MODIFIED else LocalSortMode.NAME
 
     private val FUNBOX_WXID_REGEX = Regex("[A-Za-z][A-Za-z0-9_-]{5,63}")
     private val TELEGRAM_BOT_TOKEN_REGEX = Regex("[0-9]{6,12}:[A-Za-z0-9_-]{30,64}")

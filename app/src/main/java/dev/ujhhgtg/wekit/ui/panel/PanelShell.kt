@@ -11,12 +11,14 @@ import androidx.activity.ComponentDialog
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -50,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
@@ -77,6 +82,7 @@ data class PanelAction(
     val label: String,
     val enabled: Boolean = true,
     val showLabel: Boolean = false,
+    val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit,
 )
 
@@ -288,9 +294,35 @@ fun <T> PanelShell(
                     ) {
                         actions.forEach { action ->
                             if (action.showLabel) {
-                                TextButton(onClick = action.onClick, enabled = action.enabled) {
-                                    Icon(action.icon, action.label, Modifier.size(20.dp))
-                                    Text(action.label, Modifier.padding(start = 6.dp))
+                                if (action.onLongClick == null) {
+                                    TextButton(onClick = action.onClick, enabled = action.enabled) {
+                                        Icon(action.icon, action.label, Modifier.size(20.dp))
+                                        Text(action.label, Modifier.padding(start = 6.dp))
+                                    }
+                                } else {
+                                    CompositionLocalProvider(
+                                        LocalContentColor provides MaterialTheme.colorScheme.primary,
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .defaultMinSize(minWidth = 64.dp, minHeight = 40.dp)
+                                                .clip(CircleShape)
+                                                .combinedClickable(
+                                                    enabled = action.enabled,
+                                                    onClick = action.onClick,
+                                                    onLongClick = action.onLongClick,
+                                                )
+                                                .padding(horizontal = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Icon(action.icon, action.label, Modifier.size(20.dp))
+                                            Text(
+                                                text = action.label,
+                                                modifier = Modifier.padding(start = 6.dp),
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                        }
+                                    }
                                 }
                             } else {
                                 IconButton(onClick = action.onClick, enabled = action.enabled) {

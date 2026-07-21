@@ -128,6 +128,10 @@ object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
         renameLocalPack = { old, new -> withContext(Dispatchers.IO) { VoicePanelRepository.renamePack(old, new) } },
         deleteLocalPack = { withContext(Dispatchers.IO) { VoicePanelRepository.deletePack(it) } },
         deleteLocalVoices = { paths -> withContext(Dispatchers.IO) { VoicePanelRepository.deleteVoices(paths) } },
+        savePackOrder = { withContext(Dispatchers.IO) { VoicePanelRepository.savePackOrder(it) } },
+        saveItemOrder = { packId, paths ->
+            withContext(Dispatchers.IO) { VoicePanelRepository.saveItemOrder(packId, paths) }
+        },
         preview = ::resolveVoicePath,
         releasePreview = { preview ->
             if (preview.temporary) preview.path.asPath.deleteIfExists()

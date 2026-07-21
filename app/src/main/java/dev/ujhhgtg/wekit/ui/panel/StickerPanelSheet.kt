@@ -69,6 +69,7 @@ import com.composables.icons.materialsymbols.outlined.Arrow_back
 import com.composables.icons.materialsymbols.outlined.Close
 import com.composables.icons.materialsymbols.outlined.Cloud
 import com.composables.icons.materialsymbols.outlined.Delete
+import com.composables.icons.materialsymbols.outlined.Drag_handle
 import com.composables.icons.materialsymbols.outlined.Edit
 import com.composables.icons.materialsymbols.outlined.Folder
 import com.composables.icons.materialsymbols.outlined.History
@@ -81,6 +82,7 @@ import com.composables.icons.materialsymbols.outlined.Settings
 import com.composables.icons.materialsymbols.outlined.Sort
 import com.composables.icons.materialsymbols.outlined.Upload
 import com.composables.icons.materialsymbols.outlined.Upload_file
+import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
 import dev.ujhhgtg.wekit.features.items.chat.panel.PANEL_BULK_DOWNLOAD_CONCURRENCY
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
@@ -143,6 +145,12 @@ data class StickerPanelActions(
     val deleteStickers: suspend (List<String>) -> Result<Int> = {
         Result.failure(UnsupportedOperationException())
     },
+    val savePackOrder: suspend (List<String>) -> Result<Unit> = {
+        Result.failure(UnsupportedOperationException())
+    },
+    val saveItemOrder: suspend (String, List<String>) -> Result<Unit> = { _, _ ->
+        Result.failure(UnsupportedOperationException())
+    },
     val ensurePack: suspend (String) -> Result<String> = { Result.failure(UnsupportedOperationException()) },
     val saveOnlineSticker: suspend (String, StickerItem) -> Result<Unit> = { _, _ ->
         Result.failure(UnsupportedOperationException())
@@ -180,6 +188,11 @@ private sealed interface StickerPrompt {
     data class SetStickerTitle(val item: StickerItem) : StickerPrompt
     data class DeleteSticker(val item: StickerItem) : StickerPrompt
     data class DeleteStickers(val items: List<StickerItem>) : StickerPrompt
+}
+
+private enum class StickerReorderTarget {
+    PACKS,
+    ITEMS,
 }
 
 @Composable
@@ -232,6 +245,11 @@ private fun StickerPanelContent(
     var previewSticker by remember { mutableStateOf<StickerItem?>(null) }
     var recentMostUsed by remember { mutableStateOf(PanelSettings.stickerRecentSortMode == 1) }
     var onlineSortMode by remember { mutableIntStateOf(PanelSettings.onlineStickerSortMode.coerceIn(0, 2)) }
+    var localPackSortMode by remember { mutableStateOf(PanelSettings.stickerPackSortMode) }
+    var localItemSortMode by remember { mutableStateOf(PanelSettings.stickerItemSortMode) }
+    var reorderTarget by remember { mutableStateOf<StickerReorderTarget?>(null) }
+    var reorderPackId by remember { mutableStateOf<String?>(null) }
+    var reorderKeys by remember { mutableStateOf<List<String>>(emptyList()) }
     var localRequest by remember { mutableIntStateOf(0) }
     val localPackGridState = rememberLazyGridState()
     val localPackListState = rememberLazyListState()
@@ -457,7 +475,81 @@ private fun StickerPanelContent(
     }
     val localCatalogVisible = localPackLayout != StickerPackLayout.TABS && localDetailPack == null
     val localActionPack = if (localPackLayout == StickerPackLayout.TABS) selectedPack else localDetailPack
-    val panelActions = if (multiSelectMode && multiSelectItems.isNotEmpty()) {
+
+    fun cancelReorder() {
+        reorderTarget = null
+        reorderPackId = null
+        reorderKeys = emptyList()
+    }
+
+    fun changeLocalSortMode(target: StickerReorderTarget, mode: LocalSortMode) {
+        when (target) {
+            StickerReorderTarget.PACKS -> {
+                localPackSortMode = mode
+                PanelSettings.stickerPackSortMode = mode
+                if (mode == LocalSortMode.CUSTOM && !PanelSettings.stickerPackCustomSortHintShown) {
+                    PanelSettings.stickerPackCustomSortHintShown = true
+                    scope.launch { showToastSuspend(context, "长按「自定义」字样开始排序") }
+                }
+            }
+
+            StickerReorderTarget.ITEMS -> {
+                localItemSortMode = mode
+                PanelSettings.stickerItemSortMode = mode
+                if (mode == LocalSortMode.CUSTOM && !PanelSettings.stickerItemCustomSortHintShown) {
+                    PanelSettings.stickerItemCustomSortHintShown = true
+                    scope.launch { showToastSuspend(context, "长按「自定义」字样开始排序") }
+                }
+            }
+        }
+        refreshLocal()
+    }
+
+    fun startReorder(target: StickerReorderTarget) {
+        when (target) {
+            StickerReorderTarget.PACKS -> {
+                if (editablePacks.isEmpty()) return
+                reorderPackId = null
+                reorderKeys = editablePacks.map(StickerPack::id)
+            }
+
+            StickerReorderTarget.ITEMS -> {
+                val pack = localActionPack ?: return
+                val paths = pack.items.mapNotNull(StickerItem::localPath)
+                if (paths.isEmpty()) return
+                reorderPackId = pack.id
+                reorderKeys = paths
+            }
+        }
+        reorderTarget = target
+    }
+
+    fun saveReorder() {
+        val target = reorderTarget ?: return
+        val requested = reorderKeys
+        val packId = reorderPackId
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                when (target) {
+                    StickerReorderTarget.PACKS -> actions.savePackOrder(requested)
+                    StickerReorderTarget.ITEMS -> packId?.let {
+                        actions.saveItemOrder(it, requested)
+                    } ?: Result.failure(IllegalStateException("未选择表情包"))
+                }
+            }
+            if (result.isSuccess) {
+                cancelReorder()
+                refreshLocal()
+                operationMessage = "已保存自定义顺序"
+            } else {
+                operationMessage = result.exceptionOrNull()?.message ?: "保存排序失败"
+            }
+        }
+    }
+
+    val panelActions = if (reorderTarget != null) {
+        panelReorderActions(::cancelReorder, ::saveReorder)
+    } else if (multiSelectMode && multiSelectItems.isNotEmpty()) {
         panelMultiSelectActions(
             items = multiSelectItems,
             selectedKeys = selectedStickerKeys,
@@ -476,13 +568,21 @@ private fun StickerPanelContent(
         )
     } else when (destination) {
         StickerDestination.PACKS -> if (localCatalogVisible) {
-            listOf(
-                PanelAction(MaterialSymbols.Outlined.Add, "新建表情包") { prompt = StickerPrompt.CreatePack },
-                PanelAction(MaterialSymbols.Outlined.Upload_file, "导入") {
+            buildList {
+                add(PanelAction(MaterialSymbols.Outlined.Add, "新建表情包") { prompt = StickerPrompt.CreatePack })
+                add(PanelAction(MaterialSymbols.Outlined.Upload_file, "导入") {
                     prompt = StickerPrompt.Import(null)
-                },
-                PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal),
-            )
+                })
+                add(PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal))
+                add(
+                    panelLocalSortAction(
+                        mode = localPackSortMode,
+                        enabled = editablePacks.isNotEmpty(),
+                        onModeChange = { changeLocalSortMode(StickerReorderTarget.PACKS, it) },
+                        onStartCustomOrder = { startReorder(StickerReorderTarget.PACKS) },
+                    ),
+                )
+            }
         } else buildList {
             if (localPackLayout != StickerPackLayout.TABS) {
                 add(PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") { localPackDetailId = null })
@@ -508,6 +608,14 @@ private fun StickerPanelContent(
                 })
             }
             add(PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal))
+            add(
+                panelLocalSortAction(
+                    mode = localItemSortMode,
+                    enabled = !localActionPack?.items.isNullOrEmpty(),
+                    onModeChange = { changeLocalSortMode(StickerReorderTarget.ITEMS, it) },
+                    onStartCustomOrder = { startReorder(StickerReorderTarget.ITEMS) },
+                ),
+            )
         }
 
         StickerDestination.ONLINE -> if (selectedOnlinePack == null && !showingMyUploads) {
@@ -569,6 +677,7 @@ private fun StickerPanelContent(
             title = title,
             actions = panelActions,
             onSelect = {
+                if (reorderTarget != null) return@PanelShell
                 multiSelectMode = false
                 selectedStickerKeys = emptySet()
                 destination = it
@@ -576,6 +685,8 @@ private fun StickerPanelContent(
             onDismiss = onDismiss,
             onBack = {
                 when {
+                    reorderTarget != null -> cancelReorder()
+
                     multiSelectMode -> {
                         multiSelectMode = false
                         selectedStickerKeys = emptySet()
@@ -607,7 +718,20 @@ private fun StickerPanelContent(
                 }
             }) else null,
         ) {
-            when (destination) {
+            when (reorderTarget) {
+                StickerReorderTarget.PACKS -> StickerPackReorderContent(
+                    packs = reorderKeys.mapNotNull { key -> editablePacks.firstOrNull { it.id == key } },
+                    onMove = { from, to -> reorderKeys = reorderKeys.moveItem(from, to) },
+                )
+
+                StickerReorderTarget.ITEMS -> StickerItemReorderContent(
+                    stickers = reorderKeys.mapNotNull { key ->
+                        localActionPack?.items?.firstOrNull { it.localPath == key }
+                    },
+                    onMove = { from, to -> reorderKeys = reorderKeys.moveItem(from, to) },
+                )
+
+                null -> when (destination) {
                 StickerDestination.RECENT -> StickerGridOrEmpty(
                     stickers = recentItems,
                     message = "还没有发送过表情",
@@ -757,6 +881,7 @@ private fun StickerPanelContent(
                         PanelSettings.onlineStickerPackLayout = it
                     },
                 )
+                }
             }
         }
 
@@ -1247,6 +1372,98 @@ private fun LocalPacksContent(
 }
 
 @Composable
+private fun StickerPackReorderContent(
+    packs: List<StickerPack>,
+    onMove: (Int, Int) -> Unit,
+) {
+    PanelReorderableList(
+        items = packs,
+        itemKey = StickerPack::id,
+        onMove = onMove,
+        modifier = Modifier.fillMaxSize(),
+    ) { pack, dragHandleModifier ->
+        ListItem(
+            colors = panelListItemColors(),
+            headlineContent = {
+                Text(pack.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            supportingContent = { Text("${pack.itemCount} 个表情") },
+            leadingContent = { StickerPackThumbnail(pack, Modifier.size(48.dp)) },
+            trailingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .then(dragHandleModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        MaterialSymbols.Outlined.Drag_handle,
+                        contentDescription = "拖动 ${pack.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun StickerItemReorderContent(
+    stickers: List<StickerItem>,
+    onMove: (Int, Int) -> Unit,
+) {
+    val context = LocalContext.current
+    PanelReorderableList(
+        items = stickers,
+        itemKey = { requireNotNull(it.localPath) },
+        onMove = onMove,
+        modifier = Modifier.fillMaxSize(),
+    ) { sticker, dragHandleModifier ->
+        ListItem(
+            colors = panelListItemColors(),
+            headlineContent = {
+                Text(
+                    sticker.customTitle?.takeIf(String::isNotBlank) ?: sticker.title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Text("已发送 ${sticker.sendCount} 次")
+            },
+            leadingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                ) {
+                    StickerAsyncImage(
+                        request = stickerImageRequest(context, sticker.localPath, securedObject = false),
+                        contentDescription = sticker.title,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            },
+            trailingContent = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .then(dragHandleModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        MaterialSymbols.Outlined.Drag_handle,
+                        contentDescription = "拖动 ${sticker.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+    }
+}
+
+@Composable
 private fun StickerPackCatalog(
     packs: List<StickerPack>,
     layout: StickerPackLayout,
@@ -1611,7 +1828,6 @@ private fun StickerSettingsContent(
 ) {
     var columns by remember { mutableIntStateOf(PanelSettings.stickerColumnCount.coerceIn(1, 15)) }
     var maxHistory by remember { mutableLongStateOf(PanelSettings.stickerMaxHistory.coerceAtLeast(1L)) }
-    var sortType by remember { mutableIntStateOf(PanelSettings.stickerSortType) }
     var autoClose by remember { mutableStateOf(PanelSettings.stickerAutoClose) }
     var telegramToken by remember { mutableStateOf(PanelSettings.telegramBotToken) }
     var clientIdPrompt by remember { mutableStateOf(false) }
@@ -1677,11 +1893,6 @@ private fun StickerSettingsContent(
                     PanelSettings.stickerMaxHistory = it
                 },
                 onCustomHistory = { historyPrompt = true },
-                newestFirst = sortType == 1,
-                onNewestFirstChange = {
-                    sortType = if (it) 1 else 0
-                    PanelSettings.stickerSortType = sortType
-                },
                 autoClose = autoClose,
                 onAutoCloseChange = {
                     autoClose = it

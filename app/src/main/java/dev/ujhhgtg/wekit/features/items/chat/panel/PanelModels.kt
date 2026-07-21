@@ -120,6 +120,16 @@ enum class VoicePackLayout {
     LIST,
 }
 
+enum class LocalSortMode(val label: String) {
+    NAME("名称"),
+    MODIFIED("最近修改"),
+    RECENT("最近使用"),
+    FREQUENT("最常使用"),
+    CUSTOM("自定义");
+
+    fun next(): LocalSortMode = entries[(ordinal + 1) % entries.size]
+}
+
 enum class VoiceDestination {
     RECENT,
     SEARCH,

@@ -105,6 +105,8 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
                         setPackCover = StickerPanelRepository::setPackCover,
                         deleteSticker = StickerPanelRepository::deleteSticker,
                         deleteStickers = StickerPanelRepository::deleteStickers,
+                        savePackOrder = StickerPanelRepository::savePackOrder,
+                        saveItemOrder = StickerPanelRepository::saveItemOrder,
                         ensurePack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.ensurePack(name) } },
                         saveOnlineSticker = { packId, item -> saveOnlineSticker(packId, item) },
                     ),
