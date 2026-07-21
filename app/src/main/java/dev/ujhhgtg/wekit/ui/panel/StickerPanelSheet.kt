@@ -154,6 +154,7 @@ fun showStickerPanelSheet(
 private sealed interface StickerPrompt {
     data object CreatePack : StickerPrompt
     data class Import(val pack: StickerPack) : StickerPrompt
+    data class UploadPack(val pack: StickerPack) : StickerPrompt
     data class RenamePack(val pack: StickerPack) : StickerPrompt
     data class DeletePack(val pack: StickerPack) : StickerPrompt
     data class SetStickerTitle(val item: StickerItem) : StickerPrompt
@@ -448,14 +449,7 @@ private fun StickerPanelContent(
                 selectedPack?.let { prompt = StickerPrompt.Import(it) }
             },
             PanelAction(MaterialSymbols.Outlined.Upload, "上传", selectedPack != null) {
-                selectedPack?.let { pack ->
-                    uploadProgress = 0f
-                    scope.launch {
-                        val result = actions.uploadPack(pack) { uploadProgress = it.coerceIn(0f, 1f) }
-                        uploadProgress = null
-                        operationMessage = result.fold({ it }, { it.message ?: "上传失败" })
-                    }
-                }
+                selectedPack?.let { prompt = StickerPrompt.UploadPack(it) }
             },
             PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::refreshLocal),
         )
@@ -758,6 +752,23 @@ private fun StickerPanelContent(
                         prompt = null
                         operationMessage = result.exceptionOrNull()?.message ?: "表情包已删除"
                         if (result.isSuccess) refreshLocal()
+                    }
+                },
+            )
+
+            is StickerPrompt.UploadPack -> PanelConfirmation(
+                title = "上传表情包",
+                message = "将“${currentPrompt.pack.title}”中的 ${currentPrompt.pack.items.size} 个表情上传到 FunBox？",
+                confirmText = "上传",
+                onDismiss = { prompt = null },
+                onConfirm = {
+                    val pack = currentPrompt.pack
+                    prompt = null
+                    uploadProgress = 0f
+                    scope.launch {
+                        val result = actions.uploadPack(pack) { uploadProgress = it.coerceIn(0f, 1f) }
+                        uploadProgress = null
+                        operationMessage = result.fold({ it }, { it.message ?: "上传失败" })
                     }
                 },
             )
