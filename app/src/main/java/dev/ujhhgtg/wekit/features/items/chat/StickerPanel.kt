@@ -2,10 +2,6 @@ package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.ContentResolver
 import android.view.View
-import android.view.ViewGroup
-import dev.ujhhgtg.reflekt.utils.makeAccessible
-import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
-import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -22,7 +18,6 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerPanelRepositor
 import dev.ujhhgtg.wekit.ui.panel.StickerImportMode
 import dev.ujhhgtg.wekit.ui.panel.StickerPanelActions
 import dev.ujhhgtg.wekit.ui.panel.showStickerPanelSheet
-import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -39,43 +34,11 @@ import kotlin.io.path.writeBytes
 @Feature(
     name = "表情面板",
     categories = ["聊天"],
-    description = "长按表情按钮打开自定义表情面板，可浏览并发送本地 GIF/PNG 表情包\n" +
-            "将图片放入 sticker_panel/<包名>/ 目录即可"
+    description = "长按表情按钮打开表情面板"
 )
-object StickerPanel : SwitchFeature(), IResolveDex {
+object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHooks
 
-    // ChatFooter.l0() is the deobfuscated initSmileyBtn — found by the string reference
-    // WeChat emits in its internal tracing framework at ChatFooter.java:4198.
-    private val methodInitSmileyBtn by dexMethod {
-        searchPackages("com.tencent.mm.pluginsdk.ui.chat")
-        matcher {
-            usingEqStrings("initSmileyBtn")
-        }
-    }
-
-    override fun onEnable() {
-        methodInitSmileyBtn.hookAfter {
-            val chatFooter = thisObject as ViewGroup
-            // l0() assigns this.C = the emoji face button (WeImageButton) from R.id.bqr,
-            // which lives in the sibling container f207215e — NOT in child[0].
-            // Voice and menu buttons both live in child[0], so the emoji button is the
-            // WeImageButton whose parent differs from child[0].
-            val child0 = chatFooter.findViewByChildIndexes<ViewGroup>(0) ?: return@hookAfter
-            val emojiButton = chatFooter.javaClass.declaredFields
-                .filter { it.type.simpleName == "WeImageButton" }
-                .firstNotNullOfOrNull { f ->
-                    f.makeAccessible()
-                    (f.get(chatFooter) as? View)?.takeIf { it.parent !== child0 }
-                } ?: return@hookAfter
-
-            emojiButton.setOnLongClickListener { v ->
-                openPanel(v)
-                true
-            }
-        }
-    }
-
-    private fun openPanel(anchor: View) {
+    fun openPanel(anchor: View) {
         val talker = WeCurrentConversationApi.value
         CoroutineScope(Dispatchers.IO).launch {
             PanelPaths.cleanupStalePanelCache()

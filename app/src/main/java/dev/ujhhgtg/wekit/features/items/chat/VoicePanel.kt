@@ -7,8 +7,6 @@ import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.View
-import android.widget.ImageButton
-import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -32,11 +30,8 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.voice.VoiceProviderRegistry
 import dev.ujhhgtg.wekit.ui.panel.VoiceImportMode
 import dev.ujhhgtg.wekit.ui.panel.VoicePanelActions
 import dev.ujhhgtg.wekit.ui.panel.showVoicePanelSheet
-import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
-import dev.ujhhgtg.wekit.ui.utils.findViewsWhich
 import dev.ujhhgtg.wekit.utils.AudioUtils
 import dev.ujhhgtg.wekit.utils.EdgeTtsClient
-import dev.ujhhgtg.wekit.utils.android.constructor
 import dev.ujhhgtg.wekit.utils.coerceToInt
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import kotlinx.coroutines.CancellationException
@@ -78,26 +73,11 @@ internal val EDGE_TTS_VOICES = listOf(
 @Feature(
     name = "语音面板",
     categories = ["聊天"],
-    description = "长按语音按钮打开语音面板，支持本地语音、文字转语音、在线语音与共享语音包",
+    description = "长按语音按钮打开语音面板",
 )
-object VoicePanel : SwitchFeature() {
+object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
 
-    override fun onEnable() {
-        ChatFooter::class.constructor.hookAfter {
-            val chatFooter = thisObject as ChatFooter
-            val searchedView = chatFooter.findViewByChildIndexes<View>(0)!!
-            val imgButtons = searchedView.findViewsWhich<ImageButton> { view ->
-                view.javaClass.simpleName == "WeImageButton"
-            }
-            val voiceButton = imgButtons.first()
-            voiceButton.setOnLongClickListener { view ->
-                openPanel(view)
-                true
-            }
-        }
-    }
-
-    private fun openPanel(anchor: View) {
+    fun openPanel(anchor: View) {
         val talker = WeCurrentConversationApi.value
         val context = anchor.context
         CoroutineScope(Dispatchers.IO).launch {

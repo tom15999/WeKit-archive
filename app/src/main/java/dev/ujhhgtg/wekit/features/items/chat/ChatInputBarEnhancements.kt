@@ -1,7 +1,6 @@
 package dev.ujhhgtg.wekit.features.items.chat
 
-import android.view.View
-import android.widget.ImageButton
+import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,17 +29,12 @@ import dev.ujhhgtg.wekit.features.core.SwitchFeature
 import dev.ujhhgtg.wekit.features.items.chat.panel.selectAndSendVoice
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
-import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
-import dev.ujhhgtg.wekit.ui.utils.findViewWhich
-import dev.ujhhgtg.wekit.ui.utils.findViewsWhich
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
-import dev.ujhhgtg.wekit.utils.android.constructor
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import android.widget.Button as AndroidButton
 
 @Feature(
     name = "聊天输入栏增强",
@@ -56,117 +50,99 @@ object ChatInputBarEnhancements : SwitchFeature(), IResolveDex {
         }
     }
 
-    override fun onEnable() {
-        ChatFooter::class.constructor.hookAfter {
-            val chatFooter = thisObject as ChatFooter
-            val searchedView = chatFooter.findViewByChildIndexes<View>(0)!!
-            val imgButtons = searchedView.findViewsWhich<ImageButton> { view ->
-                view.javaClass.simpleName == "WeImageButton"
-            }
-            val menuButton = imgButtons.last()
-            val sendButton = searchedView.findViewWhich<AndroidButton> { view ->
-                view.javaClass.name == "android.widget.Button" && run {
-                    val text = (view as AndroidButton).text?.toString()?.trim() ?: ""
-                    text == "发送" || text.equals("send", ignoreCase = true)
-                }
-            }!!
+    fun showMenu(context: Context, chatFooter: ChatFooter) {
+        showComposeDialog(context) {
+            AlertDialogContent(
+                title = { Text("聊天功能") },
+                text = {
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.large)
+                    ) {
+                        item {
+                            ActionItem(
+                                icon = MaterialSymbols.Outlined.Voice_chat,
+                                label = "发送语音文件"
+                            ) {
+                                onDismiss()
+                                selectAndSendVoice(context, WeCurrentConversationApi.value)
+                            }
+                        }
 
-            listOf(menuButton, sendButton).forEach {
-                it.setOnLongClickListener { view ->
-                    val context = view.context
+                        item {
+                            ActionItem(
+                                icon = MaterialSymbols.Outlined.Send_time_extension,
+                                label = "发送卡片消息"
+                            ) {
+                                onDismiss()
+                                val currentConv = WeCurrentConversationApi.value
+                                val content = chatFooter.lastText
 
-                    showComposeDialog(context) {
-                        AlertDialogContent(
-                            title = { Text("聊天功能") },
-                            text = {
-                                LazyColumn(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clip(MaterialTheme.shapes.large)
+                                if (content.isEmpty()) {
+                                    showToast("输入内容为空!")
+                                    return@ActionItem
+                                }
+
+                                val isSuccess = WeMessageApi.sendXmlAppMsg(currentConv, content)
+                                if (!isSuccess) {
+                                    showToast("发送卡片消息失败, 请检查格式")
+                                    return@ActionItem
+                                }
+
+                                chatFooter.lastText = ""
+                            }
+                        }
+
+                        item {
+                            ActionItem(
+                                icon = MaterialSymbols.Outlined.Alternate_email,
+                                label = "@所有人"
+                            ) {
+                                onDismiss()
+
+                                if (!WeCurrentConversationApi.value.isGroupChatWxId) {
+                                    showToast("只能在群组里使用!")
+                                    return@ActionItem
+                                }
+
+                                val contacts = WeDatabaseApi
+                                    .getGroupMembers(WeCurrentConversationApi.value)
+                                    .filter { c -> c.wxId != WeApi.selfWxId }
+                                val content = chatFooter.lastText
+
+                                val reqBody = buildJsonObject {
+                                    put("1", 1)
+                                    putJsonObject("2") {
+                                        putJsonObject("1") {
+                                            put("1", WeCurrentConversationApi.value)
+                                        }
+                                        put("2", contacts.joinToString("") { c ->
+                                            "@${c.nickname} "
+                                        } + content)
+                                        put("3", 1)
+                                        put("4", System.currentTimeMillis() / 1000)
+                                        put("5", -388413336)
+                                        put(
+                                            "6",
+                                            """<msgsource><atuserlist><![CDATA[${contacts.joinToString(",") { c -> c.wxId }}]]></atuserlist><pua>1</pua><alnode><cf>5</cf><inlenlist>73</inlenlist></alnode><eggIncluded>1</eggIncluded></msgsource>"""
+                                        )
+                                    }
+                                }
+
+                                WePacketHelper.sendCgi(
+                                    "/cgi-bin/micromsg-bin/newsendmsg",
+                                    522,
+                                    0,
+                                    0,
+                                    reqBody.toString()
                                 ) {
-                                    item {
-                                        ActionItem(
-                                            icon = MaterialSymbols.Outlined.Voice_chat,
-                                            label = "发送语音文件"
-                                        ) {
-                                            onDismiss()
-                                            selectAndSendVoice(context, WeCurrentConversationApi.value)
-                                        }
+                                    onSuccess { _ ->
+                                        showToast("已发送 (自己无法看到该消息)")
                                     }
-
-                                    item {
-                                        ActionItem(
-                                            icon = MaterialSymbols.Outlined.Send_time_extension,
-                                            label = "发送卡片消息"
-                                        ) {
-                                            onDismiss()
-                                            val currentConv = WeCurrentConversationApi.value
-                                            val content = chatFooter.lastText
-
-                                            if (content.isEmpty()) {
-                                                showToast("输入内容为空!")
-                                                return@ActionItem
-                                            }
-
-                                            val isSuccess = WeMessageApi.sendXmlAppMsg(currentConv, content)
-                                            if (!isSuccess) {
-                                                showToast("发送卡片消息失败, 请检查格式")
-                                                return@ActionItem
-                                            }
-
-                                            chatFooter.lastText = ""
-                                        }
-                                    }
-
-                                    item {
-                                        ActionItem(
-                                            icon = MaterialSymbols.Outlined.Alternate_email,
-                                            label = "@所有人"
-                                        ) {
-                                            onDismiss()
-
-                                            if (!WeCurrentConversationApi.value.isGroupChatWxId) {
-                                                showToast("只能在群组里使用!")
-                                                return@ActionItem
-                                            }
-
-                                            val contacts = WeDatabaseApi
-                                                .getGroupMembers(WeCurrentConversationApi.value)
-                                                .filter { c -> c.wxId != WeApi.selfWxId }
-                                            val content = chatFooter.lastText
-
-                                            val reqBody = buildJsonObject {
-                                                put("1", 1)
-                                                putJsonObject("2") {
-                                                    putJsonObject("1") {
-                                                        put("1", WeCurrentConversationApi.value)
-                                                    }
-                                                    put("2", contacts.joinToString("") { c ->
-                                                        "@${c.nickname} "
-                                                    } + content)
-                                                    put("3", 1)
-                                                    put("4", System.currentTimeMillis() / 1000)
-                                                    put("5", -388413336)
-                                                    put(
-                                                        "6",
-                                                        """<msgsource><atuserlist><![CDATA[${contacts.joinToString(",") { c -> c.wxId }}]]></atuserlist><pua>1</pua><alnode><cf>5</cf><inlenlist>73</inlenlist></alnode><eggIncluded>1</eggIncluded></msgsource>"""
-                                                    )
-                                                }
-                                            }
-
-                                            WePacketHelper.sendCgi(
-                                                "/cgi-bin/micromsg-bin/newsendmsg",
-                                                522,
-                                                0,
-                                                0,
-                                                reqBody.toString()
-                                            ) {
-                                                onSuccess { _ ->
-                                                    showToast("已发送 (自己无法看到该消息)")
-                                                }
-                                            }
-                                        }
-                                    }
+                                }
+                            }
+                        }
 
 //                                        ActionItem(
 //                                            icon = MaterialSymbols.Outlined.Visibility_off,
@@ -248,17 +224,12 @@ object ChatInputBarEnhancements : SwitchFeature(), IResolveDex {
 //                                                )
 //                                            }
 //                                        }
-                                }
-                            },
-                            confirmButton = { Button(onDismiss) { Text("关闭") } }
-                        )
                     }
-                    return@setOnLongClickListener true
-                }
-            }
+                },
+                confirmButton = { Button(onDismiss) { Text("关闭") } }
+            )
         }
     }
-
 }
 
 @Composable
