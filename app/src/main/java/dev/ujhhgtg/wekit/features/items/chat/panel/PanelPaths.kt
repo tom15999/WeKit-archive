@@ -16,6 +16,9 @@ object PanelPaths {
     val voicePanelDir: Path by lazy { (KnownPaths.moduleData / "voice_panel").createDirsSafe() }
     val cloneVoiceDir: Path by lazy { (voicePanelDir / "clone_voices").createDirsSafe() }
     val panelCacheDir: Path by lazy { (KnownPaths.moduleCache / "panels").createDirsSafe() }
+    val telegramStickerImportDir: Path by lazy {
+        (stickerPanelDir / ".telegram_import").createDirsSafe()
+    }
 
     fun cleanupStalePanelCache() {
         val cutoff = FileTime.from(Instant.now().minus(1, ChronoUnit.DAYS))

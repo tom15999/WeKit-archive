@@ -7,8 +7,6 @@ import android.provider.OpenableColumns
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.View
-import android.widget.ImageButton
-import com.tencent.mm.pluginsdk.ui.chat.ChatFooter
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -32,11 +30,8 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.voice.VoiceProviderRegistry
 import dev.ujhhgtg.wekit.ui.panel.VoiceImportMode
 import dev.ujhhgtg.wekit.ui.panel.VoicePanelActions
 import dev.ujhhgtg.wekit.ui.panel.showVoicePanelSheet
-import dev.ujhhgtg.wekit.ui.utils.findViewByChildIndexes
-import dev.ujhhgtg.wekit.ui.utils.findViewsWhich
 import dev.ujhhgtg.wekit.utils.AudioUtils
 import dev.ujhhgtg.wekit.utils.EdgeTtsClient
-import dev.ujhhgtg.wekit.utils.android.constructor
 import dev.ujhhgtg.wekit.utils.coerceToInt
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import kotlinx.coroutines.CancellationException
@@ -78,42 +73,23 @@ internal val EDGE_TTS_VOICES = listOf(
 @Feature(
     name = "语音面板",
     categories = ["聊天"],
-    description = "长按语音按钮打开语音面板，支持本地语音、文字转语音、在线语音与共享语音包",
+    description = "长按语音按钮打开语音面板",
 )
-object VoicePanel : SwitchFeature() {
+object VoicePanel : SwitchFeature() { // entry implementation in ChatFooterHooks
 
-    override fun onEnable() {
-        ChatFooter::class.constructor.hookAfter {
-            val chatFooter = thisObject as ChatFooter
-            val searchedView = chatFooter.findViewByChildIndexes<View>(0)!!
-            val imgButtons = searchedView.findViewsWhich<ImageButton> { view ->
-                view.javaClass.simpleName == "WeImageButton"
-            }
-            val voiceButton = imgButtons.first()
-            voiceButton.setOnLongClickListener { view ->
-                openPanel(view)
-                true
-            }
-        }
-    }
-
-    private fun openPanel(anchor: View) {
-        val talker = WeCurrentConversationApi.value
+    fun openPanel(anchor: View) {
         val context = anchor.context
+        showVoicePanelSheet(
+            context = context,
+            actions = buildActions(context),
+        )
+
         CoroutineScope(Dispatchers.IO).launch {
             PanelPaths.cleanupStalePanelCache()
-            val packs = VoicePanelRepository.loadPacks()
-            withContext(Dispatchers.Main) {
-                showVoicePanelSheet(
-                    context = context,
-                    packs = packs,
-                    actions = buildActions(context, talker),
-                )
-            }
         }
     }
 
-    private fun buildActions(context: Context, talker: String) = VoicePanelActions(
+    private fun buildActions(context: Context) = VoicePanelActions(
         reloadLocal = VoicePanelRepository::loadPacks,
         importVoice = { packId, mode, onStarted, onComplete ->
             when (mode) {
@@ -147,11 +123,16 @@ object VoicePanel : SwitchFeature() {
         createLocalPack = { name -> withContext(Dispatchers.IO) { VoicePanelRepository.createPack(name) } },
         renameLocalPack = { old, new -> withContext(Dispatchers.IO) { VoicePanelRepository.renamePack(old, new) } },
         deleteLocalPack = { withContext(Dispatchers.IO) { VoicePanelRepository.deletePack(it) } },
+        deleteLocalVoices = { paths -> withContext(Dispatchers.IO) { VoicePanelRepository.deleteVoices(paths) } },
+        savePackOrder = { withContext(Dispatchers.IO) { VoicePanelRepository.savePackOrder(it) } },
+        saveItemOrder = { packId, paths ->
+            withContext(Dispatchers.IO) { VoicePanelRepository.saveItemOrder(packId, paths) }
+        },
         preview = ::resolveVoicePath,
         releasePreview = { preview ->
             if (preview.temporary) preview.path.asPath.deleteIfExists()
         },
-        send = { sendVoice(talker, it) },
+        send = { sendVoice(WeCurrentConversationApi.value, it) },
         ensureLocalPack = { name -> withContext(Dispatchers.IO) { VoicePanelRepository.ensurePack(name) } },
         addToLocal = addToLocal@{ packId, item ->
             if (VoicePanelRepository.hasOnlineVoice(packId, item)) return@addToLocal Result.success(Unit)
@@ -165,8 +146,8 @@ object VoicePanel : SwitchFeature() {
                 }
             }
         },
-        synthesizeEdge = { text, voice -> synthesizeEdgeAndSend(talker, text, voice) },
-        synthesizeSystem = { text -> synthesizeSystemAndSend(context, talker, text) },
+        synthesizeEdge = { text, voice -> synthesizeEdgeAndSend(WeCurrentConversationApi.value, text, voice) },
+        synthesizeSystem = { text -> synthesizeSystemAndSend(context, WeCurrentConversationApi.value, text) },
         convertEdge = ::synthesizeEdgePreview,
         convertSystem = { text -> synthesizeSystemPreview(context, text) },
         loadClones = { withContext(Dispatchers.IO) { CloneVoiceRepository.load() } },
@@ -186,9 +167,9 @@ object VoicePanel : SwitchFeature() {
                 }
             }
         },
-        synthesizeClone = { text, voice -> synthesizeCloneAndSend(talker, text, voice) },
+        synthesizeClone = { text, voice -> synthesizeCloneAndSend(WeCurrentConversationApi.value, text, voice) },
         convertClone = ::synthesizeClonePreview,
-        sendConverted = { preview, title -> sendPreview(talker, preview, title) },
+        sendConverted = { preview, title -> sendPreview(WeCurrentConversationApi.value, preview, title) },
         loadExampleGroups = FunBoxCloneVoiceRepository::exampleGroups,
         loadExamples = FunBoxCloneVoiceRepository::examples,
         previewExample = ::resolveExamplePath,

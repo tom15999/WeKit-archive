@@ -31,6 +31,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -40,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,10 +64,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Account_box
 import com.composables.icons.materialsymbols.outlined.Add
+import com.composables.icons.materialsymbols.outlined.Arrow_drop_down
 import com.composables.icons.materialsymbols.outlined.Attach_file
 import com.composables.icons.materialsymbols.outlined.Attach_money
 import com.composables.icons.materialsymbols.outlined.Camera
 import com.composables.icons.materialsymbols.outlined.Chat
+import com.composables.icons.materialsymbols.outlined.Check
 import com.composables.icons.materialsymbols.outlined.Delete
 import com.composables.icons.materialsymbols.outlined.Drag_handle
 import com.composables.icons.materialsymbols.outlined.Edit
@@ -112,6 +117,17 @@ import java.lang.ref.WeakReference
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
+private enum class ToolbarDisplayMode(val preferenceValue: String, val label: String) {
+    ICON_AND_TEXT("icon_and_text", "图标+文字"),
+    ICON_ONLY("icon_only", "仅图标"),
+    TEXT_ONLY("text_only", "仅文字");
+
+    companion object {
+        fun fromPreference(value: String): ToolbarDisplayMode =
+            entries.firstOrNull { it.preferenceValue == value } ?: ICON_AND_TEXT
+    }
+}
+
 @SuppressLint("StaticFieldLeak")
 @Feature(name = "聊天工具栏", categories = ["聊天"], description = "在输入框上方添加工具栏")
 object ChatToolbar : ClickableFeature(), IResolveDex {
@@ -132,7 +148,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
         "收藏" to MaterialSymbols.Outlined.Favorite,
         "接龙" to MaterialSymbols.Outlined.Format_list_numbered,
         "文件" to MaterialSymbols.Outlined.Attach_file,
-        "名片" to MaterialSymbols.Outlined.Account_box,
+        "个人名片" to MaterialSymbols.Outlined.Account_box,
         "音乐" to MaterialSymbols.Outlined.Music_note
     )
 
@@ -174,6 +190,10 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
 
     private var itemsOrder by WePrefs.prefOption("chat_toolbar_order", NAME_TO_ICON_MAP.keys.joinToString(","))
     private var enabledItems by WePrefs.prefOption("chat_toolbar_enabled_items", NAME_TO_ICON_MAP.keys)
+    private var displayModeValue by WePrefs.prefOption(
+        "chat_toolbar_display_mode",
+        ToolbarDisplayMode.ICON_AND_TEXT.preferenceValue,
+    )
 
     // quick replies are stored as a JSON string array so individual replies may safely
     // contain commas, newlines or any other character
@@ -306,6 +326,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                         val tools by toolsState.collectAsStateWithLifecycle()
                         val itemsOrder = remember { itemsOrder }
                         val enabledItems = remember { enabledItems }
+                        val displayMode = remember { ToolbarDisplayMode.fromPreference(displayModeValue) }
 
                         val sortedVisibleItems = remember(tools) {
                             if (tools.isEmpty()) return@remember emptyList()
@@ -354,7 +375,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                         ) {
                             items(sortedVisibleItems, key = { it.first }) { (name, onClick) ->
                                 val icon = iconFor(name)
-                                FeatureChip(name, icon, onClick)
+                                FeatureChip(name, icon, displayMode, onClick)
                             }
                         }
                     }
@@ -374,12 +395,51 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                 normalizeOrder(itemsOrder.split(",").filter { it.isNotEmpty() }).toMutableStateList()
             }
             val currentEnabled = remember { enabledItems.toMutableStateList() }
+            var currentDisplayMode by remember {
+                mutableStateOf(ToolbarDisplayMode.fromPreference(displayModeValue))
+            }
+            var displayModeMenuExpanded by remember { mutableStateOf(false) }
 
             AlertDialogContent(
                 modifier = Modifier.fillMaxWidth(),
                 title = { Text("聊天工具栏") },
                 text = {
                     DefaultColumn {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            ListItem(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { displayModeMenuExpanded = true },
+                                headlineContent = { Text("显示样式") },
+                                supportingContent = { Text(currentDisplayMode.label) },
+                                trailingContent = {
+                                    Icon(
+                                        MaterialSymbols.Outlined.Arrow_drop_down,
+                                        contentDescription = "选择显示样式",
+                                    )
+                                },
+                            )
+                            DropdownMenu(
+                                expanded = displayModeMenuExpanded,
+                                onDismissRequest = { displayModeMenuExpanded = false },
+                            ) {
+                                ToolbarDisplayMode.entries.forEach { mode ->
+                                    DropdownMenuItem(
+                                        text = { Text(mode.label) },
+                                        trailingIcon = if (mode == currentDisplayMode) ({
+                                            Icon(
+                                                MaterialSymbols.Outlined.Check,
+                                                contentDescription = null,
+                                            )
+                                        }) else null,
+                                        onClick = {
+                                            currentDisplayMode = mode
+                                            displayModeMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
                         Column {
                             Text("显示与顺序", style = MaterialTheme.typography.titleSmall)
                             Text(
@@ -463,6 +523,7 @@ object ChatToolbar : ClickableFeature(), IResolveDex {
                     Button(onClick = {
                         itemsOrder = currentOrder.joinToString(",")
                         enabledItems = currentEnabled.toSet()
+                        displayModeValue = currentDisplayMode.preferenceValue
                         onDismiss()
                     }) {
                         Text("确定")
@@ -688,7 +749,7 @@ private fun <T> ReorderableList(
     val coroutineScope = rememberCoroutineScope()
     val hapticFeedback = LocalHapticFeedback.current
     var draggingKey by remember { mutableStateOf<Any?>(null) }
-    var dragOffset by remember { mutableStateOf(0f) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
 
     LazyColumn(
         state = listState,
@@ -778,16 +839,33 @@ private fun <T> ReorderableList(
 }
 
 @Composable
-private fun FeatureChip(text: String, icon: ImageVector, onClick: () -> Unit) {
+private fun FeatureChip(
+    text: String,
+    icon: ImageVector,
+    displayMode: ToolbarDisplayMode,
+    onClick: () -> Unit,
+) {
     AssistChip(
         onClick = onClick,
-        label = { Text(text) },
-        leadingIcon = {
+        label = {
+            when (displayMode) {
+                ToolbarDisplayMode.ICON_ONLY -> Icon(
+                    icon,
+                    contentDescription = text,
+                    modifier = Modifier.size(AssistChipDefaults.IconSize),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+
+                ToolbarDisplayMode.ICON_AND_TEXT,
+                ToolbarDisplayMode.TEXT_ONLY -> Text(text)
+            }
+        },
+        leadingIcon = if (displayMode == ToolbarDisplayMode.ICON_AND_TEXT) ({
             Icon(
                 icon,
                 contentDescription = null,
-                Modifier.size(AssistChipDefaults.IconSize)
+                modifier = Modifier.size(AssistChipDefaults.IconSize),
             )
-        }
+        }) else null,
     )
 }

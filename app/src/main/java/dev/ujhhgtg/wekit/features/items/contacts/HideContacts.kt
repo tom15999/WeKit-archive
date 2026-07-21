@@ -53,6 +53,7 @@ import dev.ujhhgtg.wekit.utils.android.getSystemService
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.now
 import dev.ujhhgtg.wekit.utils.reflection.BString
+import java.lang.ref.WeakReference
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
@@ -97,16 +98,15 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         override fun onReceive(context: Context, intent: Intent?) {
             if (intent?.action != Intent.ACTION_SCREEN_OFF) return
 
-            if (chattingUi == null) return
-
-            val wxId = chattingUi!!.intent.getStringExtra("Chat_User")
+            val chattingUi = chattingUi?.get() ?: return
+            val wxId = chattingUi.intent.getStringExtra("Chat_User")
             if (temporarilyShown || wxId !in hiddenContacts) return
 
             exitToMainActivity()
         }
     }
 
-    private var chattingUi: ChattingUI? = null
+    private var chattingUi: WeakReference<ChattingUI>? = null
 
     private object ShakeDetector : SensorEventListener {
 
@@ -167,6 +167,14 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
         ctx.startActivity(intent)
     }
 
+    private val methodDealNotify by dexMethod {
+        searchPackages("com.tencent.mm.booter.notification")
+        matcher {
+            paramCount(6)
+            usingEqStrings("jacks dealNotify, talker:%s, msgtype:%d, tipsFlag:%d, isRevokeMesasge:%B content:%s")
+        }
+    }
+
     override fun onEnable() {
         // --- home screen conversation list ---
 
@@ -217,7 +225,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             firstMethod { name = "onResume" }.hookAfter {
                 val activity = thisObject as ChattingUI
 
-                chattingUi = activity
+                chattingUi = WeakReference(activity)
 
                 val wxId = activity.intent.getStringExtra("Chat_User")
                 if (temporarilyShown || wxId !in hiddenContacts) return@hookAfter
@@ -226,6 +234,7 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
             }
 
             firstMethod { name = "onPause" }.hookAfter {
+                chattingUi?.clear()
                 chattingUi = null
                 ShakeDetector.stop()
             }
@@ -417,12 +426,22 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
 
         WeDatabaseListenerApi.addListener(this)
 
+        // --- notification ---
+
+        methodDealNotify.hookBefore {
+            val talker = args[1] as? String? ?: return@hookBefore
+            if (talker in hiddenContacts) {
+                result = null
+            }
+        }
+
         WeConversationApi.reloadConversations()
     }
 
     override fun onDisable() {
         runCatching { HostInfo.application.unregisterReceiver(ScreenOffReceiver) }
         ShakeDetector.stop()
+        chattingUi?.clear()
         chattingUi = null
         WeChatInputBarApi.removeListener(this)
         WeDatabaseListenerApi.removeListener(this)

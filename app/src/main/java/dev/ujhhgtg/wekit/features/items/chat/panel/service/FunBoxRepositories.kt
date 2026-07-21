@@ -10,11 +10,8 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.VoicePack
 import dev.ujhhgtg.wekit.features.items.chat.panel.VoiceProviderPage
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.asPath
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.security.MessageDigest
-import kotlin.io.path.readBytes
 
 private val funBoxClientWxId: String
     get() = PanelSettings.effectiveFunBoxApiClientWxId
@@ -95,10 +92,8 @@ object FunBoxStickerRepository {
         return resolveStickerThumbnails(result).logNetworkResult(TAG, "pack contents load") { "items=${it.size}" }
     }
 
-    suspend fun searchSimilar(imagePath: String): Result<List<StickerItem>> {
-        val imageBytes = withContext(Dispatchers.IO) {
-            imagePath.asPath.readBytes()
-        }
+    suspend fun searchSimilar(imageBytes: ByteArray): Result<List<StickerItem>> {
+        require(imageBytes.isNotEmpty()) { "图片内容为空" }
         val request = FunBoxBinaryWriter().apply { bytes(imageBytes) }.build()
         WeLogger.d(TAG, "similarity search start imageBytes=${imageBytes.size}")
         val result = FunBoxServiceClient.call(OP_STICKER_SIMILARITY, request) { response ->

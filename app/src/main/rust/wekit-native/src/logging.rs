@@ -1,11 +1,15 @@
+#[cfg(target_os = "android")]
 use std::ffi::CString;
 
-use libc::{c_char, c_int};
+#[cfg(target_os = "android")]
+use libc::c_char;
+use libc::c_int;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Android logging
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[cfg(target_os = "android")]
 unsafe extern "C" {
     /// Non-variadic Android log function — safe to call from a signal handler.
     fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
@@ -15,8 +19,10 @@ pub const ANDROID_LOG_INFO: c_int = 4;
 pub const ANDROID_LOG_WARN: c_int = 5;
 pub const ANDROID_LOG_ERROR: c_int = 6;
 
+#[cfg(target_os = "android")]
 static LOG_TAG: &std::ffi::CStr = c"WeKit";
 
+#[cfg(target_os = "android")]
 pub fn android_log(prio: c_int, msg: &str) {
     // Prepend "NativeLib: " to the message
     let full_msg = format!("NativeLib: {}", msg);
@@ -27,6 +33,11 @@ pub fn android_log(prio: c_int, msg: &str) {
     unsafe {
         __android_log_write(prio, LOG_TAG.as_ptr(), cmsg.as_ptr());
     }
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn android_log(_prio: c_int, msg: &str) {
+    eprintln!("NativeLib: {msg}");
 }
 
 #[macro_export]

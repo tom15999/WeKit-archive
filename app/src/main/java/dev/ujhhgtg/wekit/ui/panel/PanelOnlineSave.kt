@@ -18,25 +18,6 @@ data class PanelSaveProgress(
     val failed: Int = 0,
 )
 
-internal fun <T> invertPanelSelection(
-    current: Set<String>,
-    items: List<T>,
-    key: (T) -> String,
-): Set<String> {
-    val candidates = items.mapTo(linkedSetOf(), key)
-    return candidates.filterNotTo(linkedSetOf()) { it in current }
-}
-
-internal fun <T> closePanelSelectionRange(
-    current: Set<String>,
-    items: List<T>,
-    key: (T) -> String,
-): Set<String> {
-    val selectedIndexes = items.indices.filter { key(items[it]) in current }
-    if (selectedIndexes.size <= 1) return current
-    return current + (selectedIndexes.first()..selectedIndexes.last()).map { key(items[it]) }
-}
-
 @Composable
 fun PanelSaveProgressOverlay(
     progress: PanelSaveProgress,

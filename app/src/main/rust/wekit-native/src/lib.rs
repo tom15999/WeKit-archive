@@ -9,6 +9,7 @@ mod crash_triggerer;
 mod logging;
 mod native_hook;
 mod signature_verifier;
+mod telegram_sticker;
 mod utils;
 
 use std::{ffi::CString, process::abort_immediate};
@@ -26,6 +27,18 @@ use jni::{
 use libc::c_void;
 
 use crate::utils::with_jstring;
+
+fn native_error_string(env: *mut RawJNIEnv, result: Result<(), String>) -> jstring {
+    match result {
+        Ok(()) => std::ptr::null_mut(),
+        Err(message) => unsafe {
+            let fns = *env;
+            let c_str = CString::new(message)
+                .unwrap_or_else(|_| CString::new("native conversion failed").unwrap());
+            ((*fns).v1_6.NewStringUTF)(env, c_str.as_ptr())
+        },
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JNI exports
@@ -184,6 +197,37 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_AudioUtils_getDurationMs(
             0
         }
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_tgsToGifNative(
+    env: *mut RawJNIEnv,
+    _thiz: jobject,
+    input_path: jstring,
+    output_path: jstring,
+) -> jstring {
+    let result = with_jstring(env, input_path, |input| {
+        with_jstring(env, output_path, |output| {
+            telegram_sticker::tgs_to_gif(input, output)
+        })
+    });
+    native_error_string(env, result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_webmToGifNative(
+    env: *mut RawJNIEnv,
+    _thiz: jobject,
+    input_path: jstring,
+    output_path: jstring,
+    remove_rounded_canvas_mask: jboolean,
+) -> jstring {
+    let result = with_jstring(env, input_path, |input| {
+        with_jstring(env, output_path, |output| {
+            telegram_sticker::webm_to_gif(input, output, remove_rounded_canvas_mask != JNI_FALSE)
+        })
+    });
+    native_error_string(env, result)
 }
 
 /// Verify the module's signing certificate natively.

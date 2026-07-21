@@ -36,20 +36,30 @@ abstract class GenerateMethodHashesTask : DefaultTask() {
 
             val packageName = Regex("""package\s+([\w.]+)""").find(cleanContent)?.groupValues?.get(1)
 
-            // Locate the main class or object declaration
-            val classMatch = Regex("""\b(?:class|object)\s+(\w+)\b""").find(cleanContent) ?: return@forEach
-            val className = classMatch.groupValues[1]
+            // A file may declare helpers before its feature. Select the declaration that actually
+            // implements IResolveDex instead of assuming the first class/object is the feature.
+            val classRegex = Regex("""\b(?:class|object)\s+(\w+)\b""")
+            val declarations = classRegex.findAll(cleanContent).toList()
+            val resolveDexDeclaration = declarations.withIndex().firstNotNullOfOrNull { (index, match) ->
+                val braceIndex = cleanContent.indexOf('{', match.range.first)
+                val closingBraceIndex = cleanContent.indexOf('}', match.range.first)
+                val nextDeclarationIndex = declarations.getOrNull(index + 1)?.range?.first ?: cleanContent.length
+                if (
+                    braceIndex == -1 ||
+                    braceIndex >= nextDeclarationIndex ||
+                    (closingBraceIndex != -1 && braceIndex >= closingBraceIndex)
+                ) {
+                    return@firstNotNullOfOrNull null
+                }
 
-            // Extract the class signature declaration up to its opening body brace
-            val startIndex = classMatch.range.first
-            val braceIndex = cleanContent.indexOf('{', startIndex)
-            if (braceIndex == -1) return@forEach
-            val classSignature = cleanContent.substring(startIndex, braceIndex)
-
-            // Strict check: Must have an inheritance colon ':' and explicitly list 'IResolveDex'
-            if (!classSignature.contains(":") || !Regex("""\bIResolveDex\b""").containsMatchIn(classSignature)) {
-                return@forEach // Skip files that only import or reference the interface internally
-            }
+                val signature = cleanContent.substring(match.range.first, braceIndex)
+                if (signature.contains(":") && Regex("""\bIResolveDex\b""").containsMatchIn(signature)) {
+                    match
+                } else {
+                    null
+                }
+            } ?: return@forEach // Skip files that only import or reference the interface internally
+            val className = resolveDexDeclaration.groupValues[1]
 
             val fullClassName = if (packageName != null) "$packageName.$className" else className
             val blocks = mutableListOf<String>()

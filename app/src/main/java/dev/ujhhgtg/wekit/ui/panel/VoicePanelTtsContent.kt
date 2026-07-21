@@ -39,15 +39,12 @@ internal fun TtsContent(
     mode: TtsMode,
     text: String,
     converted: Boolean,
-    clones: List<CloneVoice>,
     selectedClone: CloneVoice?,
     selectedEdgeVoice: String,
     onModeChange: (TtsMode) -> Unit,
     onTextChange: (String) -> Unit,
-    onSelectClone: (CloneVoice) -> Unit,
     onSelectEdgeVoice: (String) -> Unit,
-    onChoose: () -> Unit,
-    onManage: () -> Unit,
+    onChooseOrManage: () -> Unit,
     onConvert: () -> Unit,
     onPreviewConverted: () -> Unit,
     onSendConverted: () -> Unit,
@@ -85,6 +82,7 @@ internal fun TtsContent(
             items(EDGE_TTS_VOICES) { (id, title) ->
                 ListItem(
                     modifier = Modifier.clickable { onSelectEdgeVoice(id) },
+                    colors = panelListItemColors(),
                     headlineContent = { Text(title) },
                     leadingContent = {
                         RadioButton(
@@ -104,10 +102,9 @@ internal fun TtsContent(
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    horizontalArrangement = Arrangement.End,
                 ) {
-                    OutlinedButton(onClick = onChoose, enabled = clones.isNotEmpty()) { Text("选择音色") }
-                    OutlinedButton(onClick = onManage) { Text("管理音色") }
+                    OutlinedButton(onClick = onChooseOrManage) { Text("选择或管理音色") }
                 }
             }
         }

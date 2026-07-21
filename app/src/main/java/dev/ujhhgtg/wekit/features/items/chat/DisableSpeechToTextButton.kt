@@ -16,7 +16,7 @@ object DisableSpeechToTextButton : SwitchFeature() {
         ChatFooter::class.constructor.hookAfter {
             val chatFooter = thisObject as ChatFooter
             val button = chatFooter.findViewWhich<FrameLayout> { it.javaClass.name == "com.tencent.mm.pluginsdk.ui.SpeechInputLayout" }!!
-            ((button.parent as ViewGroup).parent as ViewGroup).removeSelf()
+            (((button.parent as ViewGroup).parent as ViewGroup).parent as ViewGroup).removeSelf()
         }
     }
 }

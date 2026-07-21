@@ -1,11 +1,15 @@
 package dev.ujhhgtg.wekit.features.items.chat.panel.sticker
 
+import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
+import dev.ujhhgtg.wekit.features.items.chat.panel.PanelCustomOrders
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelPaths
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
 import dev.ujhhgtg.wekit.features.items.chat.panel.RECENT_PACK_ID
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerItem
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPack
+import dev.ujhhgtg.wekit.features.items.chat.panel.customOrderIndex
+import dev.ujhhgtg.wekit.features.items.chat.panel.normalizedCustomOrder
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.Serializable
@@ -34,6 +38,8 @@ object StickerPanelRepository {
     private val onlineRecentsFile get() = PanelPaths.stickerPanelDir / ".online_recents.json"
     private val statsFile get() = PanelPaths.stickerPanelDir / ".stats.json"
     private val titlesFile get() = PanelPaths.stickerPanelDir / ".titles.json"
+    private val coversFile get() = PanelPaths.stickerPanelDir / ".covers.json"
+    private val ordersFile get() = PanelPaths.stickerPanelDir / ".orders.json"
 
     @Serializable
     private data class StickerStats(val sendCount: Long = 0, val lastSentAt: Long = 0)
@@ -41,28 +47,59 @@ object StickerPanelRepository {
     fun loadPacks(): List<StickerPack> {
         val stats = readStats()
         val titles = readTitles()
-        val comparator = when (PanelSettings.stickerSortType) {
-            1 -> compareByDescending<Path> { Files.getLastModifiedTime(it).toMillis() }
-            else -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
-        }
+        val covers = readCovers()
+        val orders = readOrders()
         return runCatching {
             PanelPaths.stickerPanelDir.listDirectoryEntries()
                 .filter { it.isDirectory() && !it.name.startsWith(".") }
-                .sortedWith(comparator)
                 .map { packDir ->
                     val items = packDir.listDirectoryEntries()
                         .filter(::isStickerFile)
-                        .sortedWith(comparator)
+                        .sortedWith(stickerComparator(packDir.name, stats, orders))
                         .map { file -> file.toItem(packDir.name, stats, titles, PanelSource.LOCAL) }
                     StickerPack(
                         id = packDir.name,
                         title = packDir.name,
+                        cover = items.firstOrNull { item ->
+                            item.localPath?.asPath?.name == covers[packDir.name]
+                        }?.localPath ?: items.firstOrNull()?.localPath,
                         source = PanelSource.LOCAL,
                         itemCount = items.size,
                         items = items,
                     )
                 }
+                .sortedWith(packComparator(orders))
         }.getOrElse { emptyList() }
+    }
+
+    fun savePackOrder(packIds: List<String>): Result<Unit> = runCatching {
+        val available = PanelPaths.stickerPanelDir.listDirectoryEntries()
+            .filter { it.isDirectory() && !it.name.startsWith(".") }
+            .map { it.name }
+        val orders = readOrders()
+        atomicWrite(
+            ordersFile,
+            DefaultJson.encodeToString(orders.copy(packs = normalizedCustomOrder(packIds, available))),
+        )
+    }
+
+    fun saveItemOrder(packName: String, filePaths: List<String>): Result<Unit> = runCatching {
+        val safePack = requirePackName(packName)
+        val directory = packPath(safePack)
+        require(directory.isDirectory()) { "表情包不存在" }
+        val requested = filePaths.map { value ->
+            requireLocalSticker(value).also { path ->
+                require(path.parent == directory) { "表情不属于当前表情包" }
+            }.name
+        }
+        val available = directory.listDirectoryEntries().filter(::isStickerFile).map { it.name }
+        val orders = readOrders()
+        atomicWrite(
+            ordersFile,
+            DefaultJson.encodeToString(
+                orders.copy(items = orders.items + (safePack to normalizedCustomOrder(requested, available))),
+            ),
+        )
     }
 
     fun getRecents(): StickerPack {
@@ -182,6 +219,57 @@ object StickerPanelRepository {
         existingOnlinePath(packPath(requirePackName(packName)), item) != null
     }.getOrDefault(false)
 
+    fun hasTelegramSticker(packName: String, fileUniqueId: String): Boolean = runCatching {
+        existingStablePath(
+            packPath(requirePackName(packName)),
+            telegramIdentity(fileUniqueId),
+        ) != null
+    }.getOrDefault(false)
+
+    fun importTelegramSticker(
+        packName: String,
+        fileUniqueId: String,
+        input: InputStream,
+    ): Result<StickerItem> = runCatching {
+        val safePack = requirePackName(packName)
+        val packDir = packPath(safePack).also { it.createDirectories() }
+        val identity = telegramIdentity(fileUniqueId)
+        existingStablePath(packDir, identity)?.let { existing ->
+            return@runCatching existing.toItem(
+                safePack,
+                readStats(),
+                readTitles(),
+                PanelSource.IMPORTED,
+            )
+        }
+        val temporary = packDir / "$identity.part"
+        try {
+            input.use { Files.copy(it, temporary, StandardCopyOption.REPLACE_EXISTING) }
+            require(Files.size(temporary) > 0L) { "Telegram 未返回表情数据" }
+            val extension = detectImageExtension(temporary)
+                ?: throw IllegalArgumentException("Telegram 表情转换结果格式不受支持")
+            val destination = packDir / "$identity.$extension"
+            runCatching {
+                Files.move(
+                    temporary,
+                    destination,
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            }.getOrElse { Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING) }
+            destination.toItem(safePack, readStats(), readTitles(), PanelSource.IMPORTED)
+        } finally {
+            temporary.deleteIfExists()
+        }
+    }
+
+    fun deleteTelegramSticker(packName: String, fileUniqueId: String): Result<Unit> = runCatching {
+        val packDir = packPath(requirePackName(packName))
+        val path = existingStablePath(packDir, telegramIdentity(fileUniqueId))
+            ?: return@runCatching
+        deleteSticker(path.absolutePathString()).getOrThrow()
+    }
+
     fun detectImageExtension(data: ByteArray): String? = when {
         data.startsWith(byteArrayOf(0x47, 0x49, 0x46, 0x38)) -> "gif"
         data.startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)) -> "png"
@@ -203,13 +291,57 @@ object StickerPanelRepository {
         atomicWrite(titlesFile, DefaultJson.encodeToString(titles))
     }
 
-    fun deleteSticker(filePath: String): Result<Unit> = runCatching {
+    fun setPackCover(filePath: String): Result<Unit> = runCatching {
         val path = requireLocalSticker(filePath)
-        require(path.deleteIfExists()) { "表情不存在" }
-        val absolutePath = path.absolutePathString()
-        atomicWrite(recentsFile, DefaultJson.encodeToString(readRecentPaths().filterNot { it == absolutePath }))
-        atomicWrite(statsFile, DefaultJson.encodeToString(readStats().filterKeys { it != absolutePath }))
-        atomicWrite(titlesFile, DefaultJson.encodeToString(readTitles().filterKeys { it != absolutePath }))
+        val covers = readCovers().toMutableMap()
+        covers[path.parent.name] = path.name
+        atomicWrite(coversFile, DefaultJson.encodeToString(covers))
+    }
+
+    fun deleteSticker(filePath: String): Result<Unit> =
+        deleteStickers(listOf(filePath)).map { }
+
+    fun deleteStickers(filePaths: List<String>): Result<Int> = runCatching {
+        val paths = filePaths.map(::requireLocalSticker).distinct()
+        require(paths.isNotEmpty()) { "没有选择表情" }
+        paths.forEach { path -> require(path.deleteIfExists()) { "表情不存在" } }
+
+        val deletedPaths = paths.mapTo(hashSetOf()) { it.absolutePathString() }
+        atomicWrite(
+            recentsFile,
+            DefaultJson.encodeToString(readRecentPaths().filterNot { it in deletedPaths }),
+        )
+        atomicWrite(
+            statsFile,
+            DefaultJson.encodeToString(readStats().filterKeys { it !in deletedPaths }),
+        )
+        atomicWrite(
+            titlesFile,
+            DefaultJson.encodeToString(readTitles().filterKeys { it !in deletedPaths }),
+        )
+
+        val deletedCovers = paths.mapTo(hashSetOf()) { it.parent.name to it.name }
+        atomicWrite(
+            coversFile,
+            DefaultJson.encodeToString(
+                readCovers().filterNot { (packName, fileName) ->
+                    (packName to fileName) in deletedCovers
+                },
+            ),
+        )
+        val orders = readOrders()
+        val deletedNamesByPack = paths.groupBy({ it.parent.name }) { it.name }
+        atomicWrite(
+            ordersFile,
+            DefaultJson.encodeToString(
+                orders.copy(
+                    items = orders.items.mapValues { (packName, names) ->
+                        names.filterNot { it in deletedNamesByPack[packName].orEmpty() }
+                    },
+                ),
+            ),
+        )
+        paths.size
     }
 
     fun recordRecent(filePath: String) {
@@ -284,6 +416,71 @@ object StickerPanelRepository {
         }.getOrDefault(emptyMap())
     }
 
+    private fun readCovers(): Map<String, String> {
+        if (coversFile.notExists()) return emptyMap()
+        return runCatching {
+            DefaultJson.decodeFromString<Map<String, String>>(coversFile.readText())
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun readOrders(): PanelCustomOrders {
+        if (ordersFile.notExists()) return PanelCustomOrders()
+        return runCatching {
+            DefaultJson.decodeFromString<PanelCustomOrders>(ordersFile.readText())
+        }.getOrDefault(PanelCustomOrders())
+    }
+
+    private fun stickerComparator(
+        packName: String,
+        stats: Map<String, StickerStats>,
+        orders: PanelCustomOrders,
+    ): Comparator<Path> {
+        val byName = compareBy(String.CASE_INSENSITIVE_ORDER, Path::name)
+        return when (PanelSettings.stickerItemSortMode) {
+            LocalSortMode.NAME -> byName
+            LocalSortMode.MODIFIED -> compareByDescending<Path>(::lastModified).then(byName)
+            LocalSortMode.RECENT -> compareByDescending<Path> {
+                stats[it.absolutePathString()]?.lastSentAt ?: 0L
+            }.then(byName)
+
+            LocalSortMode.FREQUENT -> compareByDescending<Path> {
+                stats[it.absolutePathString()]?.sendCount ?: 0L
+            }.then(byName)
+
+            LocalSortMode.CUSTOM -> compareBy<Path> {
+                customOrderIndex(orders.items[packName], it.name)
+            }.then(byName)
+        }
+    }
+
+    private fun packComparator(orders: PanelCustomOrders): Comparator<StickerPack> {
+        val byName = compareBy(String.CASE_INSENSITIVE_ORDER, StickerPack::title)
+        return when (PanelSettings.stickerPackSortMode) {
+            LocalSortMode.NAME -> byName
+            LocalSortMode.MODIFIED -> compareByDescending<StickerPack> { pack ->
+                maxOf(
+                    lastModified(packPath(pack.id)),
+                    pack.items.maxOfOrNull { it.localPath?.asPath?.let(::lastModified) ?: 0L } ?: 0L,
+                )
+            }.then(byName)
+
+            LocalSortMode.RECENT -> compareByDescending<StickerPack> { pack ->
+                pack.items.maxOfOrNull(StickerItem::lastSentAt) ?: 0L
+            }.then(byName)
+
+            LocalSortMode.FREQUENT -> compareByDescending<StickerPack> { pack ->
+                pack.items.sumOf(StickerItem::sendCount)
+            }.then(byName)
+
+            LocalSortMode.CUSTOM -> compareBy<StickerPack> {
+                customOrderIndex(orders.packs, it.id)
+            }.then(byName)
+        }
+    }
+
+    private fun lastModified(path: Path): Long =
+        runCatching { Files.getLastModifiedTime(path).toMillis() }.getOrDefault(0L)
+
     private fun Path.toItem(
         packId: String,
         stats: Map<String, StickerStats>,
@@ -337,9 +534,19 @@ object StickerPanelRepository {
     private fun onlineIdentity(item: StickerItem): String =
         sanitizeName(item.remoteObjectId ?: item.id).ifBlank { "sticker" }.take(96)
 
+    private fun telegramIdentity(fileUniqueId: String): String =
+        "telegram_" + fileUniqueId.replace(Regex("[^A-Za-z0-9_-]"), "_")
+            .ifBlank { "sticker" }
+            .take(80)
+
     private fun existingOnlinePath(packDir: Path, item: StickerItem): Path? {
         if (!packDir.isDirectory()) return null
         val identity = onlineIdentity(item)
+        return existingStablePath(packDir, identity)
+    }
+
+    private fun existingStablePath(packDir: Path, identity: String): Path? {
+        if (!packDir.isDirectory()) return null
         return packDir.listDirectoryEntries("$identity.*").firstOrNull { path ->
             path.extension.lowercase() in supportedExtensions && path.isRegularFile() && Files.size(path) > 0L
         }
@@ -402,6 +609,23 @@ object StickerPanelRepository {
             migratePath(value, sourcePrefix, destinationPrefix)
         }
         atomicWrite(titlesFile, DefaultJson.encodeToString(migratedTitles))
+
+        val covers = readCovers().toMutableMap()
+        covers.remove(source.name)?.let { cover -> covers[destination.name] = cover }
+        atomicWrite(coversFile, DefaultJson.encodeToString(covers))
+
+        val orders = readOrders()
+        atomicWrite(
+            ordersFile,
+            DefaultJson.encodeToString(
+                orders.copy(
+                    packs = orders.packs.map { if (it == source.name) destination.name else it },
+                    items = orders.items.toMutableMap().apply {
+                        remove(source.name)?.let { put(destination.name, it) }
+                    },
+                ),
+            ),
+        )
     }
 
     private fun removePathPrefixFromMetadata(directory: Path) {
@@ -412,6 +636,20 @@ object StickerPanelRepository {
         atomicWrite(statsFile, DefaultJson.encodeToString(retainedStats))
         val retainedTitles = readTitles().filterKeys { value -> !pathIsInside(value, prefix) }
         atomicWrite(titlesFile, DefaultJson.encodeToString(retainedTitles))
+        atomicWrite(
+            coversFile,
+            DefaultJson.encodeToString(readCovers().filterKeys { it != directory.name }),
+        )
+        val orders = readOrders()
+        atomicWrite(
+            ordersFile,
+            DefaultJson.encodeToString(
+                orders.copy(
+                    packs = orders.packs.filterNot { it == directory.name },
+                    items = orders.items - directory.name,
+                ),
+            ),
+        )
     }
 
     private fun pathIsInside(value: String, directory: Path): Boolean = runCatching {
