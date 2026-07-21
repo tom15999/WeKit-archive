@@ -59,12 +59,12 @@ import com.composables.icons.materialsymbols.outlined.Drag_handle
 import com.composables.icons.materialsymbols.outlined.Edit
 import com.composables.icons.materialsymbols.outlined.Folder
 import com.composables.icons.materialsymbols.outlined.History
+import com.composables.icons.materialsymbols.outlined.Manage_search
 import com.composables.icons.materialsymbols.outlined.Mic
 import com.composables.icons.materialsymbols.outlined.Pause
 import com.composables.icons.materialsymbols.outlined.Play_arrow
 import com.composables.icons.materialsymbols.outlined.Refresh
 import com.composables.icons.materialsymbols.outlined.Save
-import com.composables.icons.materialsymbols.outlined.Search
 import com.composables.icons.materialsymbols.outlined.Select_all
 import com.composables.icons.materialsymbols.outlined.Send
 import com.composables.icons.materialsymbols.outlined.Settings
@@ -619,7 +619,7 @@ private fun VoicePanelContent(
     }
     val rail = listOf(
         PanelRailItem(VoiceDestination.RECENT, MaterialSymbols.Outlined.History, "最近使用"),
-        PanelRailItem(VoiceDestination.SEARCH, MaterialSymbols.Outlined.Search, "本地搜索"),
+        PanelRailItem(VoiceDestination.SEARCH, MaterialSymbols.Outlined.Manage_search, "本地搜索"),
         PanelRailItem(VoiceDestination.LOCAL, MaterialSymbols.Outlined.Folder, "本地语音包"),
         PanelRailItem(VoiceDestination.TTS, MaterialSymbols.Outlined.Text_to_speech, "文字转语音"),
         PanelRailItem(VoiceDestination.ONLINE, MaterialSymbols.Outlined.Cloud, "在线语音包"),

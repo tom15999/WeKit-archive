@@ -79,13 +79,14 @@ import com.composables.icons.materialsymbols.outlined.Edit
 import com.composables.icons.materialsymbols.outlined.Folder
 import com.composables.icons.materialsymbols.outlined.History
 import com.composables.icons.materialsymbols.outlined.Image_search
+import com.composables.icons.materialsymbols.outlined.Manage_search
 import com.composables.icons.materialsymbols.outlined.Person
 import com.composables.icons.materialsymbols.outlined.Refresh
 import com.composables.icons.materialsymbols.outlined.Save
-import com.composables.icons.materialsymbols.outlined.Search
 import com.composables.icons.materialsymbols.outlined.Select_all
 import com.composables.icons.materialsymbols.outlined.Settings
 import com.composables.icons.materialsymbols.outlined.Sort
+import com.composables.icons.materialsymbols.outlined.Travel_explore
 import com.composables.icons.materialsymbols.outlined.Upload
 import com.composables.icons.materialsymbols.outlined.Upload_file
 import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
@@ -497,10 +498,10 @@ private fun StickerPanelContent(
 
     val rail = buildList {
         add(PanelRailItem(StickerDestination.RECENT, MaterialSymbols.Outlined.History, "最近使用"))
-        add(PanelRailItem(StickerDestination.SEARCH, MaterialSymbols.Outlined.Search, "本地搜索"))
+        add(PanelRailItem(StickerDestination.SEARCH, MaterialSymbols.Outlined.Manage_search, "本地搜索"))
         add(PanelRailItem(StickerDestination.PACKS, MaterialSymbols.Outlined.Folder, "本地表情包"))
         add(PanelRailItem(StickerDestination.ONLINE, MaterialSymbols.Outlined.Cloud, "在线表情包"))
-        add(PanelRailItem(StickerDestination.ONLINE_SEARCH, MaterialSymbols.Outlined.Search, "在线搜索"))
+        add(PanelRailItem(StickerDestination.ONLINE_SEARCH, MaterialSymbols.Outlined.Travel_explore, "在线搜索"))
         add(PanelRailItem(StickerDestination.SETTINGS, MaterialSymbols.Outlined.Settings, "设置"))
     }
 
