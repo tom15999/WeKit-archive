@@ -252,6 +252,7 @@ private fun StickerPanelContent(
     var onlineItemsRequest by remember { mutableIntStateOf(0) }
     var searchState by remember { mutableStateOf<PanelUiState<List<StickerItem>>>(PanelUiState.Empty("输入关键词搜索在线表情")) }
     var searchRequest by remember { mutableIntStateOf(0) }
+    var similaritySearchActive by remember { mutableStateOf(false) }
     var prompt by remember { mutableStateOf<StickerPrompt?>(null) }
     var operationMessage by remember { mutableStateOf<String?>(null) }
     var progressMessage by remember { mutableStateOf<String?>(null) }
@@ -413,6 +414,7 @@ private fun StickerPanelContent(
 
     fun searchSimilar(loadImage: suspend () -> Result<ByteArray>) {
         onlineQuery = ""
+        similaritySearchActive = true
         destination = StickerDestination.ONLINE_SEARCH
         val request = ++searchRequest
         searchState = PanelUiState.Loading
@@ -431,6 +433,13 @@ private fun StickerPanelContent(
                 { PanelUiState.Error(it.message ?: "相似表情搜索失败") },
             )
         }
+    }
+
+    fun clearSimilaritySearch() {
+        searchRequest++
+        similaritySearchActive = false
+        onlineQuery = ""
+        searchState = PanelUiState.Empty("输入关键词搜索在线表情")
     }
 
     LaunchedEffect(operationMessage) {
@@ -954,6 +963,7 @@ private fun StickerPanelContent(
 
                 StickerDestination.ONLINE_SEARCH -> SearchStickerContent(
                     query = onlineQuery,
+                    inputEnabled = !similaritySearchActive,
                     onQueryChange = {
                         onlineQuery = it
                         searchRequest++
@@ -976,14 +986,15 @@ private fun StickerPanelContent(
                             )
                         }
                     },
-                    onImageSearch = {
+                    imageSearchActive = similaritySearchActive,
+                    onImageSearch = if (similaritySearchActive) ::clearSimilaritySearch else ({
                         actions.pickSimilarityImage { result ->
                             result.fold(
                                 onSuccess = { prompt = StickerPrompt.ConfirmSimilarityBytes(it) },
                                 onFailure = { operationMessage = it.message ?: "无法读取所选图片" },
                             )
                         }
-                    },
+                    }),
                     state = searchState,
                     emptyMessage = "输入关键词搜索在线表情",
                     onSend = ::send,
@@ -1437,6 +1448,8 @@ private fun SearchStickerContent(
     results: List<StickerItem>,
     onSearch: (() -> Unit)?,
     onImageSearch: (() -> Unit)? = null,
+    inputEnabled: Boolean = true,
+    imageSearchActive: Boolean = false,
     emptyMessage: String,
     onSend: (StickerItem) -> Unit,
     onLongPress: (StickerItem) -> Unit,
@@ -1450,10 +1463,15 @@ private fun SearchStickerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(8.dp),
+            enabled = inputEnabled,
             onSearch = onSearch,
             extraTrailingIcon = if (onImageSearch == null) null else ({
                 IconButton(onClick = onImageSearch) {
-                    Icon(MaterialSymbols.Outlined.Image_search, "选择图片搜索相似表情")
+                    Icon(
+                        if (imageSearchActive) MaterialSymbols.Outlined.Close
+                        else MaterialSymbols.Outlined.Image_search,
+                        if (imageSearchActive) "清除以图搜图结果" else "选择图片搜索相似表情",
+                    )
                 }
             }),
         )

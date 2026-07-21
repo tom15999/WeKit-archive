@@ -341,6 +341,7 @@ fun PanelSearchField(
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier.fillMaxWidth(),
+    enabled: Boolean = true,
     onSearch: (() -> Unit)? = null,
     extraTrailingIcon: (@Composable () -> Unit)? = null,
 ) {
@@ -348,6 +349,7 @@ fun PanelSearchField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier,
+        enabled = enabled,
         singleLine = true,
         label = { Text(label) },
         leadingIcon = { Icon(MaterialSymbols.Outlined.Search, null) },
@@ -356,7 +358,7 @@ fun PanelSearchField(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     extraTrailingIcon?.invoke()
                     if (onSearch != null) {
-                        IconButton(onClick = onSearch, enabled = value.isNotBlank()) {
+                        IconButton(onClick = onSearch, enabled = enabled && value.isNotBlank()) {
                             Icon(MaterialSymbols.Outlined.Send, "搜索")
                         }
                     } else if (value.isNotEmpty()) {
@@ -376,7 +378,7 @@ fun PanelSearchField(
             else -> null
         },
         keyboardOptions = KeyboardOptions(imeAction = if (onSearch == null) ImeAction.Done else ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { onSearch?.invoke() }),
+        keyboardActions = KeyboardActions(onSearch = { if (enabled) onSearch?.invoke() }),
     )
 }
 
