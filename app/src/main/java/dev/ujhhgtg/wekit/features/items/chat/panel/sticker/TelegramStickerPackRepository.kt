@@ -71,6 +71,7 @@ object TelegramStickerPackRepository {
         try {
             val token = PanelSettings.telegramBotToken.trim()
             require(PanelSettings.isValidTelegramBotToken(token)) { "请先在设置中填写有效的 Telegram Bot Token" }
+            val removeRoundedVideoMask = PanelSettings.stickerRemoveRoundedVideoMask
             val requestedName = extractStickerSetName(value)
                 ?: throw IllegalArgumentException("请输入有效的 Telegram 表情包名称或链接")
             val stickerSet = TelegramStickerApiClient.getStickerSet(token, requestedName)
@@ -205,7 +206,8 @@ object TelegramStickerPackRepository {
                                         -> convertSticker(
                                             sourceFormat,
                                             rawPath,
-                                            convertedDir / "$identity.gif",
+                                            convertedDir / "$identity.${if (removeRoundedVideoMask) "maskless" else "original"}.gif",
+                                            removeRoundedVideoMask,
                                         )
                                 }
                                 Files.newInputStream(importPath).use { input ->
@@ -303,6 +305,7 @@ object TelegramStickerPackRepository {
         format: TelegramStickerSourceFormat,
         source: Path,
         destination: Path,
+        removeRoundedVideoMask: Boolean,
     ): Path {
         if (destination.isRegularFile() && withContext(Dispatchers.IO) {
                 destination.fileSize()
@@ -311,7 +314,11 @@ object TelegramStickerPackRepository {
         partial.deleteIfExists()
         val result = when (format) {
             TelegramStickerSourceFormat.TGS -> TelegramStickerConverter.tgsToGif(source, partial)
-            TelegramStickerSourceFormat.WEBM -> TelegramStickerConverter.webmToGif(source, partial)
+            TelegramStickerSourceFormat.WEBM -> TelegramStickerConverter.webmToGif(
+                source,
+                partial,
+                removeRoundedVideoMask,
+            )
             TelegramStickerSourceFormat.WEBP -> error("静态 WebP 不需要转换")
         }
         result.getOrThrow()

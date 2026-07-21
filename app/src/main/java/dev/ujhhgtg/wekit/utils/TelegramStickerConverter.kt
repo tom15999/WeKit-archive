@@ -17,11 +17,19 @@ object TelegramStickerConverter {
         require(output.isRegularFile() && output.fileSize() > 0L) { "TGS 转换未生成 GIF" }
     }
 
-    suspend fun webmToGif(input: Path, output: Path): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun webmToGif(
+        input: Path,
+        output: Path,
+        removeRoundedCanvasMask: Boolean,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             currentCoroutineContext().ensureActive()
             output.parent?.createDirectories()
-            webmToGifNative(input.toString(), output.toString())?.let(::error)
+            webmToGifNative(
+                input.toString(),
+                output.toString(),
+                removeRoundedCanvasMask,
+            )?.let(::error)
             currentCoroutineContext().ensureActive()
             require(output.isRegularFile() && output.fileSize() > 0L) { "视频表情转换未生成 GIF" }
             Result.success(Unit)
@@ -34,5 +42,9 @@ object TelegramStickerConverter {
 
     private external fun tgsToGifNative(inputPath: String, outputPath: String): String?
 
-    private external fun webmToGifNative(inputPath: String, outputPath: String): String?
+    private external fun webmToGifNative(
+        inputPath: String,
+        outputPath: String,
+        removeRoundedCanvasMask: Boolean,
+    ): String?
 }

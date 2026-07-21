@@ -220,10 +220,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_webmToGi
     _thiz: jobject,
     input_path: jstring,
     output_path: jstring,
+    remove_rounded_canvas_mask: jboolean,
 ) -> jstring {
     let result = with_jstring(env, input_path, |input| {
         with_jstring(env, output_path, |output| {
-            telegram_sticker::webm_to_gif(input, output)
+            telegram_sticker::webm_to_gif(input, output, remove_rounded_canvas_mask != JNI_FALSE)
         })
     });
     native_error_string(env, result)

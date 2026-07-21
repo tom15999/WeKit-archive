@@ -36,6 +36,10 @@ object PanelSettings {
         DEFAULT_FUNBOX_API_CLIENT_WXID,
     )
     var telegramBotToken by prefOption("sticker_panel_telegram_bot_token", "")
+    var stickerRemoveRoundedVideoMask by prefOption(
+        "sticker_panel_remove_rounded_video_mask",
+        false,
+    )
 
     var localStickerPackLayout: StickerPackLayout
         get() = StickerPackLayout.entries.firstOrNull { it.name == localStickerPackLayoutValue }

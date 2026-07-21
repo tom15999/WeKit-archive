@@ -37,6 +37,7 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -1830,6 +1831,9 @@ private fun StickerSettingsContent(
     var maxHistory by remember { mutableLongStateOf(PanelSettings.stickerMaxHistory.coerceAtLeast(1L)) }
     var autoClose by remember { mutableStateOf(PanelSettings.stickerAutoClose) }
     var telegramToken by remember { mutableStateOf(PanelSettings.telegramBotToken) }
+    var removeRoundedVideoMask by remember {
+        mutableStateOf(PanelSettings.stickerRemoveRoundedVideoMask)
+    }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var telegramTokenPrompt by remember { mutableStateOf(false) }
     var numberPrompt by remember { mutableStateOf(false) }
@@ -1840,6 +1844,22 @@ private fun StickerSettingsContent(
                 PanelTelegramBotTokenSetting(
                     configured = telegramToken.isNotBlank(),
                     onClick = { telegramTokenPrompt = true },
+                )
+            }
+            item {
+                ListItem(
+                    colors = panelListItemColors(),
+                    headlineContent = { Text("自动移除视频贴纸圆角遮罩") },
+                    supportingContent = { Text("仅影响从 Telegram 导入的 WEBM 表情") },
+                    trailingContent = {
+                        Switch(
+                            checked = removeRoundedVideoMask,
+                            onCheckedChange = {
+                                removeRoundedVideoMask = it
+                                PanelSettings.stickerRemoveRoundedVideoMask = it
+                            },
+                        )
+                    },
                 )
             }
             item { PanelFunBoxApiClientIdSetting { clientIdPrompt = true } }

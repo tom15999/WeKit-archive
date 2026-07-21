@@ -42,16 +42,21 @@ unsafe extern "C" {
     fn wekit_vpx_decoder_error(decoder: *mut WeKitVpxDecoder) -> *const c_char;
 }
 
-pub fn webm_to_gif(input_path: &str, output_path: &str) -> Result<(), String> {
+pub fn webm_to_gif(
+    input_path: &str,
+    output_path: &str,
+    remove_rounded_canvas_mask: bool,
+) -> Result<(), String> {
     let packets = read_webm_packets(input_path)?;
-    if packets.len() < 2 {
-        return Err("WebM contains fewer than two video frames".to_string());
+    if packets.is_empty() {
+        return Err("WebM contains no video frames".to_string());
     }
 
     let selected = selected_webm_frames(&packets);
-    if selected.len() < 2 {
-        return Err("WebM sampling produced fewer than two frames".to_string());
+    if selected.is_empty() {
+        return Err("WebM sampling produced no frames".to_string());
     }
+    let expect_animation = selected.len() > 1;
     let duration_ms = webm_duration_ms(&packets);
     let delay_ms = (duration_ms as f64 / selected.len() as f64)
         .round()
@@ -78,7 +83,7 @@ pub fn webm_to_gif(input_path: &str, output_path: &str) -> Result<(), String> {
             continue;
         }
         let color = color.ok_or_else(|| format!("VP9 produced no color frame at index {index}"))?;
-        let mut rgba = color.to_rgba(alpha.as_ref())?;
+        let mut rgba = color.to_rgba(alpha.as_ref(), remove_rounded_canvas_mask)?;
         let digest: [u8; 32] = Sha256::digest(&rgba).into();
         if let Some(first) = &first_digest {
             has_distinct_frame |= first != &digest;
@@ -105,7 +110,10 @@ pub fn webm_to_gif(input_path: &str, output_path: &str) -> Result<(), String> {
         encoded_frames += 1;
     }
 
-    if encoded_frames < 2 || !has_distinct_frame {
+    if encoded_frames == 0 {
+        return Err("WebM decoder produced no frames".to_string());
+    }
+    if expect_animation && (encoded_frames < 2 || !has_distinct_frame) {
         return Err("WebM decoder did not produce an animation".to_string());
     }
     let output = encoder
@@ -334,10 +342,26 @@ impl YuvFrame {
         })
     }
 
-    fn to_rgba(&self, alpha: Option<&YuvFrame>) -> Result<Vec<u8>, String> {
+    fn to_rgba(
+        &self,
+        alpha: Option<&YuvFrame>,
+        remove_rounded_canvas_mask: bool,
+    ) -> Result<Vec<u8>, String> {
         if let Some(alpha) = alpha {
             if alpha.width != self.width || alpha.height != self.height {
                 return Err("VP9 color and alpha frames have different dimensions".to_string());
+            }
+        }
+        let mut alpha_values = alpha.map(|frame| {
+            frame
+                .y
+                .iter()
+                .map(|value| alpha_luma(*value, frame.full_range))
+                .collect::<Vec<_>>()
+        });
+        if remove_rounded_canvas_mask {
+            if let Some(values) = &mut alpha_values {
+                remove_rounded_canvas_alpha(values, self.width, self.height);
             }
         }
         let mut pixels = vec![0_u8; self.width * self.height * 4];
@@ -347,8 +371,9 @@ impl YuvFrame {
                 let u = self.u[(row / 2) * self.width.div_ceil(2) + column / 2] as i32;
                 let v = self.v[(row / 2) * self.width.div_ceil(2) + column / 2] as i32;
                 let (red, green, blue) = yuv_to_rgb(y, u, v, self.full_range);
-                let alpha = alpha
-                    .map(|frame| alpha_luma(frame.y[row * self.width + column], frame.full_range))
+                let alpha = alpha_values
+                    .as_ref()
+                    .map(|values| values[row * self.width + column])
                     .unwrap_or(255);
                 let offset = (row * self.width + column) * 4;
                 pixels[offset..offset + 4].copy_from_slice(&[red, green, blue, alpha]);
@@ -408,6 +433,60 @@ fn alpha_luma(value: u8, full_range: bool) -> u8 {
     } else {
         (((value as i32 - 16).max(0) * 255 + 109) / 219).clamp(0, 255) as u8
     }
+}
+
+fn remove_rounded_canvas_alpha(alpha: &mut [u8], width: usize, height: usize) -> bool {
+    const OPAQUE_THRESHOLD: u8 = 250;
+    const TRANSPARENT_CORNER_THRESHOLD: u8 = 64;
+    if width < 8 || height < 8 || alpha.len() != width * height {
+        return false;
+    }
+
+    let corners = [
+        alpha[0],
+        alpha[width - 1],
+        alpha[(height - 1) * width],
+        alpha[height * width - 1],
+    ];
+    if corners
+        .iter()
+        .any(|value| *value >= TRANSPARENT_CORNER_THRESHOLD)
+    {
+        return false;
+    }
+
+    let edge_midpoints = [
+        alpha[width / 2],
+        alpha[(height - 1) * width + width / 2],
+        alpha[(height / 2) * width],
+        alpha[(height / 2) * width + width - 1],
+    ];
+    if edge_midpoints.iter().any(|value| *value < OPAQUE_THRESHOLD) {
+        return false;
+    }
+
+    let corner_width = (width / 8).max(1);
+    let corner_height = (height / 8).max(1);
+    let mut non_opaque = 0_usize;
+    for (index, value) in alpha.iter().enumerate() {
+        if *value >= OPAQUE_THRESHOLD {
+            continue;
+        }
+        non_opaque += 1;
+        let x = index % width;
+        let y = index / width;
+        let near_horizontal_edge = x < corner_width || x >= width - corner_width;
+        let near_vertical_edge = y < corner_height || y >= height - corner_height;
+        if !near_horizontal_edge || !near_vertical_edge {
+            return false;
+        }
+    }
+    if non_opaque == 0 || non_opaque.saturating_mul(100) > alpha.len().saturating_mul(3) {
+        return false;
+    }
+
+    alpha.fill(255);
+    true
 }
 
 pub fn tgs_to_gif(input_path: &str, output_path: &str) -> Result<(), String> {
@@ -555,12 +634,75 @@ mod tests {
             return;
         };
         let output = std::env::temp_dir().join("wekit-telegram-webm-test.gif");
-        webm_to_gif(&input, output.to_str().expect("UTF-8 output path")).expect("convert WebM");
+        webm_to_gif(&input, output.to_str().expect("UTF-8 output path"), false)
+            .expect("convert WebM");
         let data = fs::read(&output).expect("read GIF output");
         assert!(data.starts_with(b"GIF8"));
         assert!(data.len() > 100);
         assert!(gif_frame_count(&data) > 1);
         assert!(gif_has_transparent_pixel(&data));
         let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn converts_single_frame_webm_sample_from_environment() {
+        let Ok(input) = std::env::var("WEKIT_WEBM_SINGLE_FRAME_TEST_INPUT") else {
+            return;
+        };
+        let output = std::env::temp_dir().join("wekit-telegram-webm-single-frame-test.gif");
+        webm_to_gif(&input, output.to_str().expect("UTF-8 output path"), true)
+            .expect("convert single-frame WebM");
+        let data = fs::read(&output).expect("read GIF output");
+        assert!(data.starts_with(b"GIF8"));
+        assert_eq!(gif_frame_count(&data), 1);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn removes_rounded_mask_from_webm_sample_from_environment() {
+        let Ok(input) = std::env::var("WEKIT_WEBM_ROUNDED_MASK_TEST_INPUT") else {
+            return;
+        };
+        let output = std::env::temp_dir().join("wekit-telegram-webm-maskless-test.gif");
+        webm_to_gif(&input, output.to_str().expect("UTF-8 output path"), true)
+            .expect("convert WebM without rounded mask");
+        let data = fs::read(&output).expect("read GIF output");
+        assert!(gif_frame_count(&data) > 1);
+        assert!(!gif_has_transparent_pixel(&data));
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn removes_only_rounded_canvas_alpha() {
+        let width = 100;
+        let height = 80;
+        let mut rounded = vec![255; width * height];
+        for y in 0..5 {
+            for x in 0..5 {
+                rounded[y * width + x] = 0;
+                rounded[y * width + width - 1 - x] = 0;
+                rounded[(height - 1 - y) * width + x] = 0;
+                rounded[(height - 1 - y) * width + width - 1 - x] = 0;
+            }
+        }
+        assert!(remove_rounded_canvas_alpha(&mut rounded, width, height));
+        assert!(rounded.iter().all(|alpha| *alpha == 255));
+
+        let mut content_transparency = vec![255; width * height];
+        for y in 0..5 {
+            for x in 0..5 {
+                content_transparency[y * width + x] = 0;
+                content_transparency[y * width + width - 1 - x] = 0;
+                content_transparency[(height - 1 - y) * width + x] = 0;
+                content_transparency[(height - 1 - y) * width + width - 1 - x] = 0;
+            }
+        }
+        content_transparency[(height / 2) * width + width / 2] = 0;
+        assert!(!remove_rounded_canvas_alpha(
+            &mut content_transparency,
+            width,
+            height,
+        ));
+        assert_eq!(content_transparency[(height / 2) * width + width / 2], 0);
     }
 }
