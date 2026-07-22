@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -55,6 +56,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -224,18 +226,22 @@ private fun StickerPanelContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val rememberedNavigation = remember {
+        PanelNavigationMemory.sticker.takeIf { PanelSettings.rememberPanelNavigation }
+    }
     var localPacks by remember { mutableStateOf<List<StickerPack>>(emptyList()) }
     var localState by remember { mutableStateOf<PanelUiState<Unit>>(PanelUiState.Loading) }
     var destination by remember {
         mutableStateOf(
-            StickerDestination.entries.firstOrNull { it.name == PanelSettings.stickerLastDestination }
+            rememberedNavigation?.destination
+                ?: StickerDestination.entries.firstOrNull { it.name == PanelSettings.stickerLastDestination }
                 ?: StickerDestination.RECENT,
         )
     }
     var selectedPackId by remember {
-        mutableStateOf<String?>(null)
+        mutableStateOf(rememberedNavigation?.selectedLocalPackId)
     }
-    var localPackDetailId by remember { mutableStateOf<String?>(null) }
+    var localPackDetailId by remember { mutableStateOf(rememberedNavigation?.localPackDetailId) }
     var localPackLayout by remember { mutableStateOf(PanelSettings.localStickerPackLayout) }
     var onlinePackLayout by remember { mutableStateOf(PanelSettings.onlineStickerPackLayout) }
     var wrapActions by remember { mutableStateOf(PanelSettings.wrapPanelActions) }
@@ -249,9 +255,9 @@ private fun StickerPanelContent(
     var onlinePacksRequest by remember { mutableIntStateOf(0) }
     var myUploadsState by remember { mutableStateOf<PanelUiState<List<StickerPack>>>(PanelUiState.Loading) }
     var myUploadsRequest by remember { mutableIntStateOf(0) }
-    var showingMyUploads by remember { mutableStateOf(false) }
-    var selectedOnlinePackId by remember { mutableStateOf<String?>(null) }
-    var pendingOnlinePackId by remember { mutableStateOf<String?>(null) }
+    var showingMyUploads by remember { mutableStateOf(rememberedNavigation?.showingMyUploads == true) }
+    var selectedOnlinePackId by remember { mutableStateOf(rememberedNavigation?.selectedOnlinePackId) }
+    var pendingOnlinePackId by remember { mutableStateOf(rememberedNavigation?.selectedOnlinePackId) }
     var onlineItemsState by remember { mutableStateOf<PanelUiState<List<StickerItem>>>(PanelUiState.Empty("选择一个在线表情包")) }
     var onlineItemsRequest by remember { mutableIntStateOf(0) }
     var searchState by remember { mutableStateOf<PanelUiState<List<StickerItem>>>(PanelUiState.Empty("输入关键词搜索在线表情")) }
@@ -285,6 +291,25 @@ private fun StickerPanelContent(
     val onlinePackGridState = rememberLazyGridState()
     val onlinePackListState = rememberLazyListState()
     val onlineItemGridState = rememberLazyGridState()
+    val navigationSnapshot by rememberUpdatedState(
+        StickerPanelNavigation(
+            destination = destination,
+            selectedLocalPackId = selectedPackId,
+            localPackDetailId = localPackDetailId,
+            showingMyUploads = showingMyUploads,
+            selectedOnlinePackId = selectedOnlinePackId,
+        ),
+    )
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (PanelSettings.rememberPanelNavigation) {
+                PanelNavigationMemory.sticker = navigationSnapshot
+            } else {
+                PanelNavigationMemory.sticker = null
+            }
+        }
+    }
 
     fun refreshLocal() {
         val request = ++localRequest
@@ -363,7 +388,6 @@ private fun StickerPanelContent(
                     else PanelUiState.Content(packs)
                 },
                 onFailure = {
-                    pendingOnlinePackId = null
                     PanelUiState.Error(it.message ?: "在线表情包加载失败")
                 },
             )
@@ -406,7 +430,25 @@ private fun StickerPanelContent(
             val result = actions.loadMyUploads()
             if (request != myUploadsRequest || !showingMyUploads) return@launch
             myUploadsState = result.fold(
-                onSuccess = { if (it.isEmpty()) PanelUiState.Empty("还没有上传表情包") else PanelUiState.Content(it) },
+                onSuccess = { packs ->
+                    val requestedPackId = pendingOnlinePackId
+                    pendingOnlinePackId = null
+                    val requestedPack = packs.firstOrNull { it.id == requestedPackId }
+                    if (requestedPackId != null) {
+                        if (requestedPack == null) {
+                            selectedOnlinePackId = null
+                            onlineItemsRequest++
+                            onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
+                            operationMessage = "未找到该表情所属的在线表情包"
+                        } else {
+                            selectedOnlinePackId = requestedPack.id
+                            scope.launch { onlineItemGridState.scrollToItem(0) }
+                            loadOnlinePack(requestedPack)
+                        }
+                    }
+                    if (packs.isEmpty()) PanelUiState.Empty("还没有上传表情包")
+                    else PanelUiState.Content(packs)
+                },
                 onFailure = { PanelUiState.Error(it.message ?: "我的上传加载失败") },
             )
         }
@@ -506,8 +548,9 @@ private fun StickerPanelContent(
 
     LaunchedEffect(destination) {
         PanelSettings.stickerLastDestination = destination.name
-        if (destination == StickerDestination.ONLINE && onlinePacksState == PanelUiState.Loading) {
-            loadOnlinePacks()
+        if (destination == StickerDestination.ONLINE) {
+            if (showingMyUploads && myUploadsState == PanelUiState.Loading) loadMyUploads()
+            else if (!showingMyUploads && onlinePacksState == PanelUiState.Loading) loadOnlinePacks()
         }
     }
 
@@ -774,6 +817,7 @@ private fun StickerPanelContent(
                 PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") {
                     showingMyUploads = false
                     myUploadsRequest++
+                    if (onlinePacksState == PanelUiState.Loading) loadOnlinePacks()
                 },
                 PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::loadMyUploads),
             )
@@ -858,6 +902,7 @@ private fun StickerPanelContent(
                     destination == StickerDestination.ONLINE && showingMyUploads -> {
                         showingMyUploads = false
                         myUploadsRequest++
+                        if (onlinePacksState == PanelUiState.Loading) loadOnlinePacks()
                     }
 
                     destination == StickerDestination.PACKS &&
@@ -2211,6 +2256,7 @@ private fun StickerSettingsContent(
     var columns by remember { mutableIntStateOf(PanelSettings.stickerColumnCount.coerceIn(1, 15)) }
     var maxHistory by remember { mutableLongStateOf(PanelSettings.stickerMaxHistory.coerceAtLeast(1L)) }
     var autoClose by remember { mutableStateOf(PanelSettings.panelAutoClose) }
+    var rememberNavigation by remember { mutableStateOf(PanelSettings.rememberPanelNavigation) }
     var telegramToken by remember { mutableStateOf(PanelSettings.telegramBotToken) }
     var removeRoundedVideoMask by remember {
         mutableStateOf(PanelSettings.stickerRemoveRoundedVideoMask)
@@ -2320,6 +2366,12 @@ private fun StickerSettingsContent(
                 },
                 wrapActions = wrapActions,
                 onWrapActionsChange = onWrapActionsChange,
+                rememberNavigation = rememberNavigation,
+                onRememberNavigationChange = {
+                    rememberNavigation = it
+                    PanelSettings.rememberPanelNavigation = it
+                    if (!it) PanelNavigationMemory.clear()
+                },
             )
         }
         if (clientIdPrompt) PanelFunBoxApiClientIdPrompt(

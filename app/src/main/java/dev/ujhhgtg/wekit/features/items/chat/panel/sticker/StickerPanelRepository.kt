@@ -10,6 +10,7 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.StickerItem
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPack
 import dev.ujhhgtg.wekit.features.items.chat.panel.customOrderIndex
 import dev.ujhhgtg.wekit.features.items.chat.panel.normalizedCustomOrder
+import dev.ujhhgtg.wekit.utils.MediaFileTypeDetector
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.serialization.Serializable
@@ -18,11 +19,11 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.UUID
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
-import kotlin.io.path.extension
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
@@ -33,7 +34,6 @@ import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 object StickerPanelRepository {
-    private val supportedExtensions = setOf("gif", "png", "webp", "wxgf", "jpg", "jpeg")
     private val recentsFile get() = PanelPaths.stickerPanelDir / "recents.json"
     private val onlineRecentsFile get() = PanelPaths.stickerPanelDir / ".online_recents.json"
     private val statsFile get() = PanelPaths.stickerPanelDir / ".stats.json"
@@ -135,9 +135,6 @@ object StickerPanelRepository {
         }
     }
 
-    fun supportsFileName(fileName: String): Boolean =
-        fileName.substringAfterLast('.', "").lowercase() in supportedExtensions
-
     fun createPack(name: String): Result<String> = runCatching {
         val safeName = sanitizeName(name)
         require(safeName.isNotBlank()) { "表情包名称不能为空" }
@@ -177,13 +174,19 @@ object StickerPanelRepository {
 
     fun importSticker(packName: String, displayName: String, input: InputStream): Result<StickerItem> = runCatching {
         val safePack = requirePackName(sanitizeName(packName).ifBlank { "导入" })
-        val safeFile = sanitizeFileName(displayName)
-        val extension = safeFile.substringAfterLast('.', "png").lowercase()
-        require(extension in supportedExtensions) { "不支持的图片格式: $extension" }
         val packDir = packPath(safePack).also { it.createDirectories() }
-        val destination = uniquePath(packDir, safeFile)
-        input.use { Files.copy(it, destination) }
-        destination.toItem(safePack, readStats(), readTitles(), PanelSource.IMPORTED)
+        val temporary = packDir / ".import-${UUID.randomUUID()}.part"
+        try {
+            input.use { Files.copy(it, temporary, StandardCopyOption.REPLACE_EXISTING) }
+            require(Files.size(temporary) > 0L) { "图片文件为空" }
+            val format = MediaFileTypeDetector.detectImage(temporary)
+                ?: throw IllegalArgumentException("不支持或无法识别的图片格式")
+            val destination = uniquePath(packDir, "${importedFileStem(displayName, "sticker")}.${format.extension}")
+            moveImportedFile(temporary, destination)
+            destination.toItem(safePack, readStats(), readTitles(), PanelSource.IMPORTED)
+        } finally {
+            temporary.deleteIfExists()
+        }
     }
 
     /** Saves a remote sticker under a stable object-derived filename with its real image type. */
@@ -198,7 +201,7 @@ object StickerPanelRepository {
         try {
             input.use { Files.copy(it, temporary, StandardCopyOption.REPLACE_EXISTING) }
             require(Files.size(temporary) > 0L) { "服务器未返回表情数据" }
-            val extension = detectImageExtension(temporary)
+            val extension = MediaFileTypeDetector.detectImage(temporary)?.extension
                 ?: throw IllegalArgumentException("服务器返回了不支持的图片格式")
             val destination = packDir / "$identity.$extension"
             runCatching {
@@ -246,7 +249,7 @@ object StickerPanelRepository {
         try {
             input.use { Files.copy(it, temporary, StandardCopyOption.REPLACE_EXISTING) }
             require(Files.size(temporary) > 0L) { "Telegram 未返回表情数据" }
-            val extension = detectImageExtension(temporary)
+            val extension = MediaFileTypeDetector.detectImage(temporary)?.extension
                 ?: throw IllegalArgumentException("Telegram 表情转换结果格式不受支持")
             val destination = packDir / "$identity.$extension"
             runCatching {
@@ -270,17 +273,8 @@ object StickerPanelRepository {
         deleteSticker(path.absolutePathString()).getOrThrow()
     }
 
-    fun detectImageExtension(data: ByteArray): String? = when {
-        data.startsWith(byteArrayOf(0x47, 0x49, 0x46, 0x38)) -> "gif"
-        data.startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)) -> "png"
-        data.startsWith(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())) -> "jpg"
-        data.size >= 12 &&
-                data.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()) &&
-                data.copyOfRange(8, 12).contentEquals("WEBP".toByteArray()) -> "webp"
-
-        data.size >= 4 && data.copyOfRange(0, 4).toString(Charsets.US_ASCII).equals("wxgf", true) -> "wxgf"
-        else -> null
-    }
+    fun detectImageExtension(data: ByteArray): String? =
+        MediaFileTypeDetector.detectImage(data)?.extension
 
     fun setCustomTitle(filePath: String, title: String): Result<Unit> = runCatching {
         val path = requireLocalSticker(filePath)
@@ -502,7 +496,7 @@ object StickerPanelRepository {
     }
 
     private fun isStickerFile(path: Path) =
-        path.isRegularFile() && path.extension.lowercase() in supportedExtensions
+        path.isRegularFile() && !path.name.endsWith(".part") && MediaFileTypeDetector.detectImage(path) != null
 
     private fun sanitizeName(value: String) = value.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
 
@@ -526,9 +520,9 @@ object StickerPanelRepository {
         return path
     }
 
-    private fun sanitizeFileName(value: String): String {
-        val result = sanitizeName(value).ifBlank { "sticker.png" }
-        return if ('.' in result) result else "$result.png"
+    private fun importedFileStem(value: String, fallback: String): String {
+        val safeName = sanitizeName(value).ifBlank { fallback }
+        return safeName.substringBeforeLast('.', safeName).ifBlank { fallback }
     }
 
     private fun onlineIdentity(item: StickerItem): String =
@@ -547,19 +541,23 @@ object StickerPanelRepository {
 
     private fun existingStablePath(packDir: Path, identity: String): Path? {
         if (!packDir.isDirectory()) return null
-        return packDir.listDirectoryEntries("$identity.*").firstOrNull { path ->
-            path.extension.lowercase() in supportedExtensions && path.isRegularFile() && Files.size(path) > 0L
+        return packDir.listDirectoryEntries().firstOrNull { path ->
+            path.isRegularFile() &&
+                    (path.name == identity || path.name.startsWith("$identity.")) &&
+                    isStickerFile(path) && Files.size(path) > 0L
         }
     }
 
-    private fun detectImageExtension(path: Path): String? = Files.newInputStream(path).use { input ->
-        val header = ByteArray(16)
-        val count = input.read(header)
-        if (count <= 0) null else detectImageExtension(header.copyOf(count))
+    private fun moveImportedFile(source: Path, destination: Path) {
+        runCatching {
+            Files.move(
+                source,
+                destination,
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        }.getOrElse { Files.move(source, destination, StandardCopyOption.REPLACE_EXISTING) }
     }
-
-    private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
-        size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
     private fun uniquePath(dir: Path, fileName: String): Path {
         var candidate = dir / fileName

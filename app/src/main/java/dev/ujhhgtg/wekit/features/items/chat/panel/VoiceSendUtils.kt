@@ -17,10 +17,10 @@ import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.AudioUtils
+import dev.ujhhgtg.wekit.utils.MediaFileTypeDetector
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.android.showToastSuspend
 import dev.ujhhgtg.wekit.utils.coerceToInt
-import dev.ujhhgtg.wekit.utils.fileExtension
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,16 +48,16 @@ internal fun selectAndSendVoice(context: Context, currentConv: String) {
             }
 
             lifecycleScope.launch(Dispatchers.IO) {
-                val extension = uri.fileExtension.trimStart('.').ifEmpty { "mp3" }
-                val tempPath = PanelPaths.panelCacheDir / "picked-${UUID.randomUUID()}.$extension"
+                val tempPath = PanelPaths.panelCacheDir / "picked-${UUID.randomUUID()}.bin"
                 val prepareResult = runCatching {
                     contentResolver.openInputStream(uri)?.use { input ->
                         tempPath.outputStream().use(input::copyTo)
                     } ?: error("无法读取所选语音文件")
-                    val mimeType = contentResolver.getType(uri).orEmpty()
-                    val isSilk = mimeType in setOf("audio/amr", "audio/silk") ||
-                            extension.equals("silk", true) || extension.equals("amr", true)
-                    Triple(isSilk, AudioUtils.getDurationMs(tempPath.absolutePathString()), tempPath)
+                    val format = MediaFileTypeDetector.detectAudio(tempPath)
+                        ?: error("不支持或无法识别的语音格式")
+                    val directSource = format == MediaFileTypeDetector.AudioFormat.SILK ||
+                            format == MediaFileTypeDetector.AudioFormat.AMR
+                    Triple(directSource, AudioUtils.getDurationMs(tempPath.absolutePathString()), tempPath)
                 }
                 if (prepareResult.isFailure) {
                     tempPath.deleteIfExists()
@@ -137,17 +137,8 @@ internal fun selectAndSendVoice(context: Context, currentConv: String) {
                 }
             }
         }
-        // android couldn't distinguish AMR-extension SILK files, so we just use amr here
         importLauncher.launch(
-            arrayOf(
-                "audio/mpeg",
-                "audio/amr",
-                "audio/x-wav",
-                "audio/wav",
-                "audio/mp4",
-                "audio/x-m4a",
-                "application/octet-stream"
-            )
+            arrayOf("*/*")
         )
     }
 }

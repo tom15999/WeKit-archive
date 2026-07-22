@@ -206,14 +206,13 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
         files: List<PickedPanelFile>,
         resolver: ContentResolver,
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        val supported = files.filter { StickerPanelRepository.supportsFileName(it.name) }
-        if (supported.isEmpty()) {
+        if (files.isEmpty()) {
             return@withContext Result.failure(IllegalArgumentException("所选内容中没有支持的图片文件"))
         }
 
         var imported = 0
         val failures = mutableListOf<Pair<String, Throwable>>()
-        supported.forEach { file ->
+        files.forEach { file ->
             runCatching {
                 val input = resolver.openInputStream(file.uri) ?: error("无法读取文件")
                 input.use {
@@ -241,10 +240,6 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
     }
 
     private val STICKER_MIME_TYPES = arrayOf(
-        "image/gif",
-        "image/png",
-        "image/webp",
-        "image/jpeg",
-        "image/*",
+        "*/*",
     )
 }

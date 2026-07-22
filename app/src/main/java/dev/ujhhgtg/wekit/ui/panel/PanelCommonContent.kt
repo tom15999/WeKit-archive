@@ -142,6 +142,24 @@ fun PanelActionWrapSetting(
 }
 
 @Composable
+fun PanelNavigationMemorySetting(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    ListItem(
+        colors = panelListItemColors(),
+        headlineContent = { Text("记忆面板导航位置") },
+        supportingContent = { Text("关闭面板后，在本次微信运行期间恢复原页面") },
+        trailingContent = {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+            )
+        },
+    )
+}
+
+@Composable
 fun PanelHistorySetting(
     value: Long,
     onValueChange: (Long) -> Unit,
@@ -313,6 +331,8 @@ fun LazyListScope.panelCollectionSettings(
     onAutoCloseChange: (Boolean) -> Unit,
     wrapActions: Boolean,
     onWrapActionsChange: (Boolean) -> Unit,
+    rememberNavigation: Boolean,
+    onRememberNavigationChange: (Boolean) -> Unit,
 ) {
     item {
         PanelHistorySetting(
@@ -331,6 +351,12 @@ fun LazyListScope.panelCollectionSettings(
         PanelActionWrapSetting(
             checked = wrapActions,
             onCheckedChange = onWrapActionsChange,
+        )
+    }
+    item {
+        PanelNavigationMemorySetting(
+            checked = rememberNavigation,
+            onCheckedChange = onRememberNavigationChange,
         )
     }
 }

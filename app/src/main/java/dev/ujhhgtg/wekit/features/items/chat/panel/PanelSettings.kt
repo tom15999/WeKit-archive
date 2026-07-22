@@ -24,6 +24,7 @@ object PanelSettings {
     var voiceItemCustomSortHintShown by prefOption("voice_panel_item_custom_sort_hint_shown", false)
     var panelAutoClose by prefOption("panel_auto_close", true)
     var wrapPanelActions by prefOption("panel_actions_wrap", false)
+    var rememberPanelNavigation by prefOption("panel_remember_navigation", true)
     private var legacyOnlineStickerPacksUseList by prefOption("sticker_panel_online_packs_use_list", false)
     private var localStickerPackLayoutValue by prefOption("sticker_panel_local_pack_layout", "TABS")
     private var onlineStickerPackLayoutValue by prefOption("sticker_panel_online_pack_layout", "")
