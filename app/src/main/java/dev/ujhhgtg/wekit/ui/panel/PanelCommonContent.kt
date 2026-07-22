@@ -182,6 +182,20 @@ fun PanelHistorySetting(
 }
 
 @Composable
+fun PanelConcurrencySetting(
+    title: String,
+    value: Int,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        colors = panelListItemColors(),
+        headlineContent = { Text(title) },
+        supportingContent = { Text("同时运行 $value 个任务 · 点击修改") },
+    )
+}
+
+@Composable
 fun PanelFunBoxApiClientIdSetting(onClick: () -> Unit) {
     val current = PanelSettings.effectiveFunBoxApiClientWxId
     ListItem(
@@ -327,6 +341,10 @@ fun LazyListScope.panelCollectionSettings(
     maxHistory: Long,
     onMaxHistoryChange: (Long) -> Unit,
     onCustomHistory: () -> Unit,
+    downloadConcurrency: Int,
+    onCustomDownloadConcurrency: () -> Unit,
+    conversionConcurrency: Int,
+    onCustomConversionConcurrency: () -> Unit,
     autoClose: Boolean,
     onAutoCloseChange: (Boolean) -> Unit,
     wrapActions: Boolean,
@@ -339,6 +357,20 @@ fun LazyListScope.panelCollectionSettings(
             value = maxHistory,
             onValueChange = onMaxHistoryChange,
             onCustomValue = onCustomHistory,
+        )
+    }
+    item {
+        PanelConcurrencySetting(
+            title = "下载并发",
+            value = downloadConcurrency,
+            onClick = onCustomDownloadConcurrency,
+        )
+    }
+    item {
+        PanelConcurrencySetting(
+            title = "转换并发",
+            value = conversionConcurrency,
+            onClick = onCustomConversionConcurrency,
         )
     }
     item {

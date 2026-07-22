@@ -142,6 +142,7 @@ android {
     @Suppress("UnstableApiUsage")
     androidResources {
         localeFilters += setOf("zh")
+        additionalParameters += listOf("--allow-reserved-package-id", "--package-id", "0x69")
     }
 
     buildFeatures {
@@ -166,54 +167,6 @@ androidComponents {
             generateMethodHashes,
             GenerateMethodHashesTask::outputDir
         )
-
-        val variantName = variant.name.replaceFirstChar { it.uppercase() }
-        val embedAboutLibraries = tasks.register<EmbedAboutLibrariesTask>("embedAboutLibraries$variantName") {
-            group = "wekit"
-            description = "Embed aboutlibraries.json as a String constant for $variantName"
-
-            val aboutLibrariesJson = layout.buildDirectory.file("generated/aboutLibraries/${variant.name}/res/raw/aboutlibraries.json")
-            inputFile.set(aboutLibrariesJson)
-            outputDir.set(layout.buildDirectory.dir("generated/source/aboutlibraries/${variant.name}"))
-            namespace.set(libs.versions.namespace.get())
-        }
-
-        embedAboutLibraries.configure {
-            dependsOn(tasks.named("prepareLibraryDefinitions$variantName"))
-        }
-
-        kotlinSources.addGeneratedSourceDirectory(
-            embedAboutLibraries,
-            EmbedAboutLibrariesTask::outputDir
-        )
-
-        val embedEruda = tasks.register<EmbedErudaTask>("embedEruda$variantName") {
-            group = "wekit"
-            description = "Embed eruda.min.js as a String constant for $variantName"
-
-            url.set("https://cdn.jsdelivr.net/npm/eruda@3.4.3/eruda.min.js")
-            outputDir.set(layout.buildDirectory.dir("generated/source/eruda/${variant.name}"))
-            namespace.set(libs.versions.namespace.get())
-        }
-
-        kotlinSources.addGeneratedSourceDirectory(
-            embedEruda,
-            EmbedErudaTask::outputDir
-        )
-
-//        val embedMonetAssets = tasks.register<EmbedMonetAssetsTask>("embedMonetAssets$variantName") {
-//            group = "wekit"
-//            description = "Embed Monet overlay templates/tables as byte-array constants for $variantName"
-//
-//            inputDir.set(layout.projectDirectory.dir("embedded/monet"))
-//            outputDir.set(layout.buildDirectory.dir("generated/source/monet/${variant.name}"))
-//            namespace.set(libs.versions.namespace.get())
-//        }
-//
-//        kotlinSources.addGeneratedSourceDirectory(
-//            embedMonetAssets,
-//            EmbedMonetAssetsTask::outputDir
-//        )
     }
 }
 

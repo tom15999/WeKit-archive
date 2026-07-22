@@ -205,10 +205,11 @@ pub extern "C" fn Java_dev_ujhhgtg_wekit_utils_TelegramStickerConverter_tgsToGif
     _thiz: jobject,
     input_path: jstring,
     output_path: jstring,
+    frame_rate: jint,
 ) -> jstring {
     let result = with_jstring(env, input_path, |input| {
         with_jstring(env, output_path, |output| {
-            telegram_sticker::tgs_to_gif(input, output)
+            telegram_sticker::tgs_to_gif(input, output, frame_rate as f32)
         })
     });
     native_error_string(env, result)

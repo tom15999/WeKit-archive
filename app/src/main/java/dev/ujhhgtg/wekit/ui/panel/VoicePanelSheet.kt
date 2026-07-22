@@ -75,7 +75,6 @@ import com.composables.icons.materialsymbols.outlined.Upload_file
 import dev.ujhhgtg.wekit.features.items.chat.panel.CloneExample
 import dev.ujhhgtg.wekit.features.items.chat.panel.CloneVoice
 import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
-import dev.ujhhgtg.wekit.features.items.chat.panel.PANEL_BULK_DOWNLOAD_CONCURRENCY
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelUiState
@@ -911,7 +910,7 @@ private fun VoicePanelContent(
             var failed = 0
             try {
                 uniqueItems.parallelForEachWithProgress(
-                    maxConcurrency = PANEL_BULK_DOWNLOAD_CONCURRENCY,
+                    maxConcurrency = PanelSettings.effectivePanelDownloadConcurrency,
                     transform = { item -> actions.addToLocal(packId, item) },
                     onItemComplete = { _, total, _, result ->
                         if (result.isSuccess) succeeded++ else failed++
@@ -2483,10 +2482,18 @@ private fun VoiceSettingsContent(
     onWrapActionsChange: (Boolean) -> Unit,
 ) {
     var maxHistory by remember { mutableLongStateOf(PanelSettings.voiceMaxHistory.coerceAtLeast(1L)) }
+    var downloadConcurrency by remember {
+        mutableIntStateOf(PanelSettings.effectivePanelDownloadConcurrency)
+    }
+    var conversionConcurrency by remember {
+        mutableIntStateOf(PanelSettings.effectivePanelConversionConcurrency)
+    }
     var autoClose by remember { mutableStateOf(PanelSettings.panelAutoClose) }
     var rememberNavigation by remember { mutableStateOf(PanelSettings.rememberPanelNavigation) }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var historyPrompt by remember { mutableStateOf(false) }
+    var downloadConcurrencyPrompt by remember { mutableStateOf(false) }
+    var conversionConcurrencyPrompt by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize()) {
             item { PanelFunBoxApiClientIdSetting { clientIdPrompt = true } }
@@ -2508,6 +2515,10 @@ private fun VoiceSettingsContent(
                     PanelSettings.voiceMaxHistory = it
                 },
                 onCustomHistory = { historyPrompt = true },
+                downloadConcurrency = downloadConcurrency,
+                onCustomDownloadConcurrency = { downloadConcurrencyPrompt = true },
+                conversionConcurrency = conversionConcurrency,
+                onCustomConversionConcurrency = { conversionConcurrencyPrompt = true },
                 autoClose = autoClose,
                 onAutoCloseChange = {
                     autoClose = it
@@ -2540,6 +2551,32 @@ private fun VoiceSettingsContent(
                 maxHistory = it
                 PanelSettings.voiceMaxHistory = it
                 historyPrompt = false
+            },
+        )
+        if (downloadConcurrencyPrompt) PanelNumberPrompt(
+            title = "下载并发",
+            label = "任务数（1-32）",
+            initialValue = downloadConcurrency.toLong(),
+            minValue = PanelSettings.MIN_PANEL_CONCURRENCY.toLong(),
+            maxValue = PanelSettings.MAX_PANEL_DOWNLOAD_CONCURRENCY.toLong(),
+            onDismiss = { downloadConcurrencyPrompt = false },
+            onConfirm = {
+                downloadConcurrency = it.toInt()
+                PanelSettings.panelDownloadConcurrency = downloadConcurrency
+                downloadConcurrencyPrompt = false
+            },
+        )
+        if (conversionConcurrencyPrompt) PanelNumberPrompt(
+            title = "转换并发",
+            label = "任务数（1-8）",
+            initialValue = conversionConcurrency.toLong(),
+            minValue = PanelSettings.MIN_PANEL_CONCURRENCY.toLong(),
+            maxValue = PanelSettings.MAX_PANEL_CONVERSION_CONCURRENCY.toLong(),
+            onDismiss = { conversionConcurrencyPrompt = false },
+            onConfirm = {
+                conversionConcurrency = it.toInt()
+                PanelSettings.panelConversionConcurrency = conversionConcurrency
+                conversionConcurrencyPrompt = false
             },
         )
     }

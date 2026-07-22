@@ -3,11 +3,13 @@ package dev.ujhhgtg.wekit.features.items.miniapps
 import android.webkit.ValueCallback
 import android.webkit.WebView
 import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.wekit.R
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
-import dev.ujhhgtg.wekit.eruda.ErudaProvider
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.features.core.SwitchFeature
+import dev.ujhhgtg.wekit.loader.utils.ResourcesInjector
+import dev.ujhhgtg.wekit.utils.HostInfo
 import dev.ujhhgtg.wekit.utils.TargetProcesses
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.reflection.BString
@@ -19,6 +21,14 @@ import org.luckypray.dexkit.query.enums.StringMatchType
     description = "小程序页面注入 Eruda 调试控制台"
 )
 object ErudaConsole : SwitchFeature(), IResolveDex {
+
+    private val erudaScript by lazy {
+        val resources = HostInfo.application.resources
+        ResourcesInjector.injectModuleRes(resources)
+        resources.openRawResource(R.raw.eruda)
+            .bufferedReader()
+            .use { it.readText() }
+    }
 
     private val xwebOnPageFinished by dexMethod {
         searchPackages("com.tencent.mm.plugin.appbrand.page")
@@ -64,12 +74,12 @@ object ErudaConsole : SwitchFeature(), IResolveDex {
         try {
             when (webView) {
                 is WebView -> {
-                    webView.evaluateJavascript(ErudaProvider.ERUDA_JS, null)
+                    webView.evaluateJavascript(erudaScript, null)
                     webView.evaluateJavascript("eruda.init();", null)
                 }
 
                 is com.tencent.xweb.WebView -> {
-                    webView.evaluateJavascript(ErudaProvider.ERUDA_JS, null)
+                    webView.evaluateJavascript(erudaScript, null)
                     webView.evaluateJavascript("eruda.init();", null)
                 }
 
@@ -79,7 +89,7 @@ object ErudaConsole : SwitchFeature(), IResolveDex {
                         parameters(BString, ValueCallback::class)
                         superclass()
                     }.apply {
-                        invoke(ErudaProvider.ERUDA_JS, null)
+                        invoke(erudaScript, null)
                         invoke("eruda.init();", null)
                     }
                 }

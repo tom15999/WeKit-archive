@@ -96,7 +96,6 @@ import com.composables.icons.materialsymbols.outlined.Travel_explore
 import com.composables.icons.materialsymbols.outlined.Upload
 import com.composables.icons.materialsymbols.outlined.Upload_file
 import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
-import dev.ujhhgtg.wekit.features.items.chat.panel.PANEL_BULK_DOWNLOAD_CONCURRENCY
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelUiState
@@ -497,7 +496,7 @@ private fun StickerPanelContent(
             var failed = 0
             try {
                 uniqueItems.parallelForEachWithProgress(
-                    maxConcurrency = PANEL_BULK_DOWNLOAD_CONCURRENCY,
+                    maxConcurrency = PanelSettings.effectivePanelDownloadConcurrency,
                     transform = { item -> actions.saveOnlineSticker(packId, item) },
                     onItemComplete = { _, total, _, result ->
                         if (result.isSuccess) succeeded++ else failed++
@@ -2541,9 +2540,23 @@ private fun StickerSettingsContent(
 ) {
     var columns by remember { mutableIntStateOf(PanelSettings.stickerColumnCount.coerceIn(1, 15)) }
     var maxHistory by remember { mutableLongStateOf(PanelSettings.stickerMaxHistory.coerceAtLeast(1L)) }
+    var downloadConcurrency by remember {
+        mutableIntStateOf(PanelSettings.effectivePanelDownloadConcurrency)
+    }
+    var conversionConcurrency by remember {
+        mutableIntStateOf(PanelSettings.effectivePanelConversionConcurrency)
+    }
     var autoClose by remember { mutableStateOf(PanelSettings.panelAutoClose) }
     var rememberNavigation by remember { mutableStateOf(PanelSettings.rememberPanelNavigation) }
     var telegramToken by remember { mutableStateOf(PanelSettings.telegramBotToken) }
+    var tgsGifFrameRate by remember {
+        mutableIntStateOf(
+            PanelSettings.stickerTgsGifFrameRate.coerceIn(
+                PanelSettings.MIN_TGS_GIF_FRAME_RATE,
+                PanelSettings.MAX_TGS_GIF_FRAME_RATE,
+            ),
+        )
+    }
     var removeRoundedVideoMask by remember {
         mutableStateOf(PanelSettings.stickerRemoveRoundedVideoMask)
     }
@@ -2555,14 +2568,25 @@ private fun StickerSettingsContent(
     }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var telegramTokenPrompt by remember { mutableStateOf(false) }
+    var tgsFrameRatePrompt by remember { mutableStateOf(false) }
     var numberPrompt by remember { mutableStateOf(false) }
     var historyPrompt by remember { mutableStateOf(false) }
+    var downloadConcurrencyPrompt by remember { mutableStateOf(false) }
+    var conversionConcurrencyPrompt by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 PanelTelegramBotTokenSetting(
                     configured = telegramToken.isNotBlank(),
                     onClick = { telegramTokenPrompt = true },
+                )
+            }
+            item {
+                ListItem(
+                    modifier = Modifier.clickable { tgsFrameRatePrompt = true },
+                    colors = panelListItemColors(),
+                    headlineContent = { Text("TGS → GIF 帧率") },
+                    supportingContent = { Text("$tgsGifFrameRate FPS · 点击修改") },
                 )
             }
             item {
@@ -2664,6 +2688,10 @@ private fun StickerSettingsContent(
                     PanelSettings.stickerMaxHistory = it
                 },
                 onCustomHistory = { historyPrompt = true },
+                downloadConcurrency = downloadConcurrency,
+                onCustomDownloadConcurrency = { downloadConcurrencyPrompt = true },
+                conversionConcurrency = conversionConcurrency,
+                onCustomConversionConcurrency = { conversionConcurrencyPrompt = true },
                 autoClose = autoClose,
                 onAutoCloseChange = {
                     autoClose = it
@@ -2695,6 +2723,19 @@ private fun StickerSettingsContent(
                 telegramTokenPrompt = false
             },
         )
+        if (tgsFrameRatePrompt) PanelNumberPrompt(
+            title = "TGS → GIF 帧率",
+            label = "帧率（1-60 FPS）",
+            initialValue = tgsGifFrameRate.toLong(),
+            minValue = PanelSettings.MIN_TGS_GIF_FRAME_RATE.toLong(),
+            maxValue = PanelSettings.MAX_TGS_GIF_FRAME_RATE.toLong(),
+            onDismiss = { tgsFrameRatePrompt = false },
+            onConfirm = {
+                tgsGifFrameRate = it.toInt()
+                PanelSettings.stickerTgsGifFrameRate = tgsGifFrameRate
+                tgsFrameRatePrompt = false
+            },
+        )
         if (numberPrompt) PanelNumberPrompt(
             title = "每行表情数量",
             label = "数量（1-15）",
@@ -2718,6 +2759,32 @@ private fun StickerSettingsContent(
                 maxHistory = it
                 PanelSettings.stickerMaxHistory = it
                 historyPrompt = false
+            },
+        )
+        if (downloadConcurrencyPrompt) PanelNumberPrompt(
+            title = "下载并发",
+            label = "任务数（1-32）",
+            initialValue = downloadConcurrency.toLong(),
+            minValue = PanelSettings.MIN_PANEL_CONCURRENCY.toLong(),
+            maxValue = PanelSettings.MAX_PANEL_DOWNLOAD_CONCURRENCY.toLong(),
+            onDismiss = { downloadConcurrencyPrompt = false },
+            onConfirm = {
+                downloadConcurrency = it.toInt()
+                PanelSettings.panelDownloadConcurrency = downloadConcurrency
+                downloadConcurrencyPrompt = false
+            },
+        )
+        if (conversionConcurrencyPrompt) PanelNumberPrompt(
+            title = "转换并发",
+            label = "任务数（1-8）",
+            initialValue = conversionConcurrency.toLong(),
+            minValue = PanelSettings.MIN_PANEL_CONCURRENCY.toLong(),
+            maxValue = PanelSettings.MAX_PANEL_CONVERSION_CONCURRENCY.toLong(),
+            onDismiss = { conversionConcurrencyPrompt = false },
+            onConfirm = {
+                conversionConcurrency = it.toInt()
+                PanelSettings.panelConversionConcurrency = conversionConcurrency
+                conversionConcurrencyPrompt = false
             },
         )
     }

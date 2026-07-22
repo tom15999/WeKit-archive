@@ -40,7 +40,7 @@
 ## Key Conventions
 
 - Package namespace: `dev.ujhhgtg.wekit`
-- Min SDK 29, target SDK 37, compile SDK 37
+- Min SDK 28, target SDK 37, compile SDK 37
 - Target: WeChat `com.tencent.mm`, versions 8.0.65–8.0.71. Version info in `HostInfo`
 - Process targeting via `TargetProcesses`: override `startup()` to check
   `TargetProcesses.isInMain` / `TargetProcesses.currentType`. Default: main process only.
