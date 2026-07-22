@@ -75,6 +75,7 @@ import dev.ujhhgtg.wekit.utils.formatEpoch
 import dev.ujhhgtg.wekit.utils.hook_status.HookStatus
 import dev.ujhhgtg.wekit.utils.openInSystem
 import dev.ujhhgtg.wekit.utils.registerBshSnapshotDecompileLaunchers
+import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 
 class MainActivity : ComponentActivity() {
 
@@ -110,12 +111,49 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        if (intent?.action == TelegramDatabaseImportContract.ACTION_PICK_ROOT_STICKER_SETS) {
+            if (!PackageNames.isWeChat(callingPackage.orEmpty())) {
+                setResult(
+                    RESULT_CANCELED,
+                    Intent().putExtra(
+                        TelegramDatabaseImportContract.EXTRA_ERROR,
+                        "只允许从微信内的 WeKit 面板启动此操作",
+                    ),
+                )
+                finish()
+                return
+            }
+            Shell.getShell()
+            setContent {
+                ModuleTheme {
+                    RootTelegramStickerSetPickerContent(
+                        cacheDir = cacheDir,
+                        applicationUid = applicationInfo.uid,
+                        onCancel = {
+                            setResult(RESULT_CANCELED)
+                            finish()
+                        },
+                        onComplete = { stickerSets ->
+                            setResult(
+                                RESULT_OK,
+                                Intent().putExtra(
+                                    TelegramDatabaseImportContract.EXTRA_STICKER_SETS,
+                                    DefaultJson.encodeToString(stickerSets),
+                                ),
+                            )
+                            finish()
+                        },
+                    )
+                }
+            }
+            return
+        }
+
         if (BuildConfig.HAS_LIBXPOSED_ENTRY) {
             runCatching { HookStatus.init(this) }
         }
 
         Shell.getShell()
-
         setContent {
             ModuleTheme {
                 AppContent(

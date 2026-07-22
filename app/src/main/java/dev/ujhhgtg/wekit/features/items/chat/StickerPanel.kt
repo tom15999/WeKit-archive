@@ -2,6 +2,10 @@ package dev.ujhhgtg.wekit.features.items.chat
 
 import android.content.ContentResolver
 import android.view.View
+import androidx.activity.result.contract.ActivityResultContracts
+import dev.ujhhgtg.wekit.activity.PickRootTelegramStickerSetsContract
+import dev.ujhhgtg.wekit.activity.RootTelegramStickerSetsResult
+import dev.ujhhgtg.wekit.activity.TransparentActivity
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
 import dev.ujhhgtg.wekit.features.api.ui.WeCurrentConversationApi
 import dev.ujhhgtg.wekit.features.core.Feature
@@ -16,9 +20,12 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.pickPanelFiles
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxServiceClient
 import dev.ujhhgtg.wekit.features.items.chat.panel.service.FunBoxStickerRepository
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.StickerPanelRepository
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramInstalledStickerSet
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerDatabase
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerPackRepository
 import dev.ujhhgtg.wekit.ui.panel.StickerImportMode
 import dev.ujhhgtg.wekit.ui.panel.StickerPanelActions
+import dev.ujhhgtg.wekit.ui.panel.TelegramDatabaseSource
 import dev.ujhhgtg.wekit.ui.panel.showStickerPanelSheet
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import kotlinx.coroutines.CancellationException
@@ -27,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.deleteIfExists
@@ -45,86 +53,93 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
         showStickerPanelSheet(
             context = anchor.context,
             actions = StickerPanelActions(
-                        reloadLocal = ::loadLocalPacks,
-                        importSticker = { packId, mode, onStarted, onComplete ->
-                            when (mode) {
-                                StickerImportMode.MULTIPLE_FILES -> pickPanelFiles(
-                                    anchor.context,
-                                    STICKER_MIME_TYPES,
-                                ) { files, activity ->
-                                    onStarted()
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        val result = importStickerBatch(
-                                            packId,
-                                            files,
-                                            activity.contentResolver,
-                                        )
-                                        withContext(Dispatchers.Main) {
-                                            onComplete(result)
-                                            activity.finish()
-                                        }
-                                    }
-                                }
-
-                                StickerImportMode.DIRECTORY -> pickPanelDirectory(anchor.context) { treeUri, activity ->
-                                    onStarted()
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        val result = runCatching {
-                                            listPanelTreeFiles(activity.contentResolver, treeUri)
-                                        }.mapCatching { files ->
-                                            importStickerBatch(
-                                                packId,
-                                                files,
-                                                activity.contentResolver,
-                                            ).getOrThrow()
-                                        }
-                                        withContext(Dispatchers.Main) {
-                                            onComplete(result)
-                                            activity.finish()
-                                        }
-                                    }
-                                }
-
-                                StickerImportMode.TELEGRAM -> Unit
-                            }
-                        },
-                        importTelegramStickerSet = TelegramStickerPackRepository::importStickerSet,
-                        createPack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.createPack(name) } },
-                        renamePack = StickerPanelRepository::renamePack,
-                        deletePack = StickerPanelRepository::deletePack,
-                        loadOnlinePacks = FunBoxStickerRepository::loadCatalog,
-                        loadMyUploads = FunBoxStickerRepository::loadMyUploads,
-                        loadOnlineItems = FunBoxStickerRepository::loadPack,
-                        searchOnline = FunBoxStickerRepository::searchText,
-                        pickSimilarityImage = { onComplete ->
-                            pickPanelFile(anchor.context, arrayOf("image/*")) { _, uri, activity ->
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    val result = runCatching {
-                                        activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                                            ?: error("无法读取所选图片")
-                                    }.mapCatching { bytes ->
-                                        require(bytes.isNotEmpty()) { "所选图片内容为空" }
-                                        bytes
-                                    }
-                                    withContext(Dispatchers.Main) {
-                                        onComplete(result)
-                                        activity.finish()
-                                    }
+                reloadLocal = ::loadLocalPacks,
+                importSticker = { packId, mode, onStarted, onComplete ->
+                    when (mode) {
+                        StickerImportMode.MULTIPLE_FILES -> pickPanelFiles(
+                            anchor.context,
+                            STICKER_MIME_TYPES,
+                        ) { files, activity ->
+                            onStarted()
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val result = importStickerBatch(
+                                    packId,
+                                    files,
+                                    activity.contentResolver,
+                                )
+                                withContext(Dispatchers.Main) {
+                                    onComplete(result)
+                                    activity.finish()
                                 }
                             }
-                        },
-                        loadSimilarityImage = ::resolveStickerBytes,
-                        searchSimilar = FunBoxStickerRepository::searchSimilar,
-                        uploadPack = FunBoxStickerRepository::uploadPack,
-                        setCustomTitle = StickerPanelRepository::setCustomTitle,
-                        setPackCover = StickerPanelRepository::setPackCover,
-                        deleteSticker = StickerPanelRepository::deleteSticker,
-                        deleteStickers = StickerPanelRepository::deleteStickers,
-                        savePackOrder = StickerPanelRepository::savePackOrder,
-                        saveItemOrder = StickerPanelRepository::saveItemOrder,
-                        ensurePack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.ensurePack(name) } },
-                        saveOnlineSticker = { packId, item -> saveOnlineSticker(packId, item) },
-                ),
+                        }
+
+                        StickerImportMode.DIRECTORY -> pickPanelDirectory(anchor.context) { treeUri, activity ->
+                            onStarted()
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val result = runCatching {
+                                    listPanelTreeFiles(activity.contentResolver, treeUri)
+                                }.mapCatching { files ->
+                                    importStickerBatch(
+                                        packId,
+                                        files,
+                                        activity.contentResolver,
+                                    ).getOrThrow()
+                                }
+                                withContext(Dispatchers.Main) {
+                                    onComplete(result)
+                                    activity.finish()
+                                }
+                            }
+                        }
+
+                        StickerImportMode.TELEGRAM_SINGLE,
+                        StickerImportMode.TELEGRAM_BATCH,
+                            -> Unit
+                    }
+                },
+                importTelegramStickerSet = TelegramStickerPackRepository::importStickerSet,
+                pickTelegramStickerSets = { source, onComplete ->
+                    pickTelegramStickerSets(anchor, source, onComplete)
+                },
+                loadImportedTelegramStickerSetNames =
+                    TelegramStickerPackRepository::importedStickerSetNames,
+                createPack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.createPack(name) } },
+                renamePack = StickerPanelRepository::renamePack,
+                deletePack = StickerPanelRepository::deletePack,
+                loadOnlinePacks = FunBoxStickerRepository::loadCatalog,
+                loadMyUploads = FunBoxStickerRepository::loadMyUploads,
+                loadOnlineItems = FunBoxStickerRepository::loadPack,
+                searchOnline = FunBoxStickerRepository::searchText,
+                pickSimilarityImage = { onComplete ->
+                    pickPanelFile(anchor.context, arrayOf("image/*")) { _, uri, activity ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            val result = runCatching {
+                                activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                                    ?: error("无法读取所选图片")
+                            }.mapCatching { bytes ->
+                                require(bytes.isNotEmpty()) { "所选图片内容为空" }
+                                bytes
+                            }
+                            withContext(Dispatchers.Main) {
+                                onComplete(result)
+                                activity.finish()
+                            }
+                        }
+                    }
+                },
+                loadSimilarityImage = ::resolveStickerBytes,
+                searchSimilar = FunBoxStickerRepository::searchSimilar,
+                uploadPack = FunBoxStickerRepository::uploadPack,
+                setCustomTitle = StickerPanelRepository::setCustomTitle,
+                setPackCover = StickerPanelRepository::setPackCover,
+                deleteSticker = StickerPanelRepository::deleteSticker,
+                deleteStickers = StickerPanelRepository::deleteStickers,
+                savePackOrder = StickerPanelRepository::savePackOrder,
+                saveItemOrder = StickerPanelRepository::saveItemOrder,
+                ensurePack = { name -> withContext(Dispatchers.IO) { StickerPanelRepository.ensurePack(name) } },
+                saveOnlineSticker = { packId, item -> saveOnlineSticker(packId, item) },
+            ),
         ) { item ->
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -199,6 +214,57 @@ object StickerPanel : SwitchFeature() { // entry implementation in ChatFooterHoo
         throw error
     } catch (error: Throwable) {
         Result.failure(error)
+    }
+
+    private fun pickTelegramStickerSets(
+        anchor: View,
+        source: TelegramDatabaseSource,
+        onComplete: (Result<List<TelegramInstalledStickerSet>>?) -> Unit,
+    ) {
+        TransparentActivity.launch(anchor.context) {
+            when (source) {
+                TelegramDatabaseSource.ROOT -> {
+                    val launcher = registerForActivityResult(PickRootTelegramStickerSetsContract()) { result ->
+                        onComplete(
+                            when (result) {
+                                is RootTelegramStickerSetsResult.Success -> Result.success(result.stickerSets)
+                                is RootTelegramStickerSetsResult.Failure ->
+                                    Result.failure(IllegalStateException(result.message))
+
+                                RootTelegramStickerSetsResult.Cancelled -> null
+                            },
+                        )
+                        finish()
+                    }
+                    launcher.launch(Unit)
+                }
+
+                TelegramDatabaseSource.MANUAL -> {
+                    val launcher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                        if (uri == null) {
+                            onComplete(null)
+                            finish()
+                            return@registerForActivityResult
+                        }
+                        CoroutineScope(Dispatchers.IO).launch {
+                            val temporary = PanelPaths.panelCacheDir / "telegram-cache4-${UUID.randomUUID()}.db"
+                            val result = runCatching {
+                                contentResolver.openInputStream(uri)?.use { input ->
+                                    Files.copy(input, temporary, StandardCopyOption.REPLACE_EXISTING)
+                                } ?: error("无法读取所选 Telegram 数据库")
+                                TelegramStickerDatabase.readInstalledSets(temporary).getOrThrow()
+                            }
+                            temporary.deleteIfExists()
+                            withContext(Dispatchers.Main) {
+                                onComplete(result)
+                                finish()
+                            }
+                        }
+                    }
+                    launcher.launch(arrayOf("application/x-sqlite3", "application/octet-stream", "*/*"))
+                }
+            }
+        }
     }
 
     private suspend fun importStickerBatch(

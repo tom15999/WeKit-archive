@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -105,6 +106,7 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.StickerItem
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPack
 import dev.ujhhgtg.wekit.features.items.chat.panel.StickerPackLayout
 import dev.ujhhgtg.wekit.features.items.chat.panel.parallelForEachWithProgress
+import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramInstalledStickerSet
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportPhase
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportProgress
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportResult
@@ -136,6 +138,11 @@ data class StickerPanelActions(
     ) -> Result<TelegramStickerImportResult> = { _, _ ->
         Result.failure(UnsupportedOperationException())
     },
+    val pickTelegramStickerSets: (
+        source: TelegramDatabaseSource,
+        onComplete: (Result<List<TelegramInstalledStickerSet>>?) -> Unit,
+    ) -> Unit = { _, _ -> },
+    val loadImportedTelegramStickerSetNames: suspend () -> Set<String> = { emptySet() },
     val createPack: suspend (String) -> Result<String> = { Result.failure(UnsupportedOperationException()) },
     val renamePack: suspend (String, String) -> Result<Unit> = { _, _ -> Result.failure(UnsupportedOperationException()) },
     val deletePack: suspend (String) -> Result<Unit> = { Result.failure(UnsupportedOperationException()) },
@@ -180,8 +187,21 @@ data class StickerPanelActions(
 enum class StickerImportMode {
     MULTIPLE_FILES,
     DIRECTORY,
-    TELEGRAM,
+    TELEGRAM_SINGLE,
+    TELEGRAM_BATCH,
 }
+
+enum class TelegramDatabaseSource {
+    ROOT,
+    MANUAL,
+}
+
+private data class TelegramBatchImportProgress(
+    val packIndex: Int,
+    val packTotal: Int,
+    val packTitle: String,
+    val itemProgress: TelegramStickerImportProgress? = null,
+)
 
 private const val SIMILARITY_SEARCH_PRIVACY_MESSAGE =
     "所选图片的完整内容将上传至第三方 FunBox API。图片可能包含个人信息或其他隐私内容，确定继续吗？"
@@ -267,7 +287,12 @@ private fun StickerPanelContent(
     var operationMessage by remember { mutableStateOf<String?>(null) }
     var progressMessage by remember { mutableStateOf<String?>(null) }
     var telegramNamePrompt by remember { mutableStateOf(false) }
+    var telegramSourcePrompt by remember { mutableStateOf(false) }
+    var telegramDiscoveredSets by remember { mutableStateOf<List<TelegramInstalledStickerSet>?>(null) }
+    var selectedTelegramSetNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var telegramDiscoveryLoading by remember { mutableStateOf(false) }
     var telegramProgress by remember { mutableStateOf<TelegramStickerImportProgress?>(null) }
+    var telegramBatchProgress by remember { mutableStateOf<TelegramBatchImportProgress?>(null) }
     var telegramImportJob by remember { mutableStateOf<Job?>(null) }
     var uploadProgress by remember { mutableStateOf<Float?>(null) }
     var multiSelectMode by remember { mutableStateOf(false) }
@@ -1137,6 +1162,17 @@ private fun StickerPanelContent(
                 },
             )
         }
+        telegramBatchProgress?.let { progress ->
+            TelegramBatchImportProgressOverlay(
+                progress = progress,
+                onCancel = {
+                    telegramImportJob?.cancel()
+                    telegramImportJob = null
+                    telegramBatchProgress = null
+                },
+            )
+        }
+        if (telegramDiscoveryLoading) PanelProgressOverlay("正在读取 Telegram 表情包列表...")
         onlineSaveProgress?.let { progress ->
             PanelSaveProgressOverlay(progress, onCancel = ::stopOnlineSave)
         }
@@ -1191,9 +1227,11 @@ private fun StickerPanelContent(
                 onDismiss = { prompt = null },
                 onSelect = { mode ->
                     prompt = null
-                    if (mode == StickerImportMode.TELEGRAM) {
+                    if (mode == StickerImportMode.TELEGRAM_SINGLE || mode == StickerImportMode.TELEGRAM_BATCH) {
                         if (!PanelSettings.isValidTelegramBotToken(PanelSettings.telegramBotToken)) {
                             scope.launch { showToastSuspend(context, "请先在设置中填写 Telegram Bot Token") }
+                        } else if (mode == StickerImportMode.TELEGRAM_BATCH) {
+                            telegramSourcePrompt = true
                         } else {
                             telegramNamePrompt = true
                         }
@@ -1393,6 +1431,95 @@ private fun StickerPanelContent(
                 }
             },
         )
+
+        if (telegramSourcePrompt) TelegramDatabaseSourcePrompt(
+            onDismiss = { telegramSourcePrompt = false },
+            onSelect = { source ->
+                telegramSourcePrompt = false
+                telegramDiscoveryLoading = true
+                actions.pickTelegramStickerSets(source) { result ->
+                    telegramDiscoveryLoading = false
+                    if (result == null) return@pickTelegramStickerSets
+                    result.fold(
+                        onSuccess = { sets ->
+                            scope.launch {
+                                val importedNames = withContext(Dispatchers.IO) {
+                                    actions.loadImportedTelegramStickerSetNames()
+                                }
+                                val uniqueSets = sets.distinctBy { it.name.lowercase() }
+                                if (uniqueSets.isEmpty()) {
+                                    operationMessage = "所选数据库中没有可导入的 Telegram 表情包"
+                                } else {
+                                    selectedTelegramSetNames = uniqueSets
+                                        .mapNotNullTo(linkedSetOf()) { set ->
+                                            set.name.takeUnless { it.lowercase() in importedNames }
+                                        }
+                                    telegramDiscoveredSets = uniqueSets
+                                }
+                            }
+                        },
+                        onFailure = { operationMessage = it.message ?: "读取 Telegram 数据库失败" },
+                    )
+                }
+            },
+        )
+
+        telegramDiscoveredSets?.let { sets ->
+            TelegramStickerSetSelectionPrompt(
+                sets = sets,
+                selectedNames = selectedTelegramSetNames,
+                onSelectionChange = { selectedTelegramSetNames = it },
+                onDismiss = {
+                    telegramDiscoveredSets = null
+                    selectedTelegramSetNames = emptySet()
+                },
+                onConfirm = {
+                    val selectedSets = sets.filter { it.name in selectedTelegramSetNames }
+                    telegramDiscoveredSets = null
+                    selectedTelegramSetNames = emptySet()
+                    telegramImportJob = scope.launch {
+                        var succeeded = 0
+                        val failures = mutableListOf<Pair<String, Throwable>>()
+                        try {
+                            selectedSets.forEachIndexed { index, set ->
+                                telegramBatchProgress = TelegramBatchImportProgress(
+                                    packIndex = index + 1,
+                                    packTotal = selectedSets.size,
+                                    packTitle = set.title,
+                                )
+                                val result = actions.importTelegramStickerSet(set.name) { itemProgress ->
+                                    withContext(Dispatchers.Main) {
+                                        telegramBatchProgress = TelegramBatchImportProgress(
+                                            packIndex = index + 1,
+                                            packTotal = selectedSets.size,
+                                            packTitle = set.title,
+                                            itemProgress = itemProgress,
+                                        )
+                                    }
+                                }
+                                result.fold(
+                                    onSuccess = { succeeded++ },
+                                    onFailure = { failures += set.title to it },
+                                )
+                            }
+                            operationMessage = buildString {
+                                append("已导入 $succeeded 个 Telegram 表情包")
+                                if (failures.isNotEmpty()) {
+                                    append("，${failures.size} 个失败")
+                                    failures.firstOrNull()?.let { (title, error) ->
+                                        append("；$title: ${error.message ?: "未知错误"}")
+                                    }
+                                }
+                            }
+                            if (succeeded > 0) refreshLocal()
+                        } finally {
+                            telegramBatchProgress = null
+                            telegramImportJob = null
+                        }
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -2056,7 +2183,11 @@ private fun StickerPreviewOverlay(
     onDelete: (() -> Unit)?,
 ) {
     val context = LocalContext.current
-    val data = sticker.localPath ?: sticker.imageUrl ?: sticker.thumbnailUrl
+    val data = sticker.localPath ?: if (PanelSettings.stickerOnlinePreviewUseOriginal) {
+        sticker.imageUrl ?: sticker.thumbnailUrl
+    } else {
+        sticker.thumbnailUrl ?: sticker.imageUrl
+    }
     BackHandler(onBack = onDismiss)
     Box(
         modifier = Modifier
@@ -2157,9 +2288,17 @@ private fun StickerImportPrompt(
             if (includeTelegramImport) {
                 add(
                     PanelImportOption(
-                        mode = StickerImportMode.TELEGRAM,
-                        title = "从 Telegram 导入",
+                        mode = StickerImportMode.TELEGRAM_SINGLE,
+                        title = "从 Telegram 导入单个包",
                         description = "输入表情包名称或链接并创建新的本地表情包",
+                        icon = TelegramIcon,
+                    ),
+                )
+                add(
+                    PanelImportOption(
+                        mode = StickerImportMode.TELEGRAM_BATCH,
+                        title = "从 Telegram 实例批量导入包",
+                        description = "从 Telegram 数据库选择多个已安装的表情包",
                         icon = TelegramIcon,
                     ),
                 )
@@ -2178,7 +2317,7 @@ private fun TelegramStickerSetPrompt(
     var input by remember { mutableStateOf("") }
     val extracted = TelegramStickerPackRepository.extractStickerSetName(input)
     PanelFullOverlay(onDismiss = onDismiss) {
-        Text("从 Telegram 导入", style = MaterialTheme.typography.titleMedium)
+        Text("从 Telegram 导入单个包", style = MaterialTheme.typography.titleMedium)
         Text(
             "输入表情包名称，或 t.me/addstickers 链接。Telegram 表情包会创建为新的本地包。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2210,11 +2349,158 @@ private fun TelegramStickerSetPrompt(
 }
 
 @Composable
+private fun TelegramDatabaseSourcePrompt(
+    onDismiss: () -> Unit,
+    onSelect: (TelegramDatabaseSource) -> Unit,
+) {
+    PanelImportModePrompt(
+        options = listOf(
+            PanelImportOption(
+                mode = TelegramDatabaseSource.ROOT,
+                title = "使用 Root 权限直接读取 Telegram 数据库",
+                description = "跳转到 WeKit 模块应用扫描实例并解析数据库",
+                icon = TelegramIcon,
+            ),
+            PanelImportOption(
+                mode = TelegramDatabaseSource.MANUAL,
+                title = "手动选择 Telegram 数据库 (cache4.db)",
+                description = "从系统文件选择器读取一个 Telegram 数据库",
+                icon = MaterialSymbols.Outlined.Folder,
+            ),
+        ),
+        onDismiss = onDismiss,
+        onSelect = onSelect,
+    )
+}
+
+@Composable
+private fun TelegramStickerSetSelectionPrompt(
+    sets: List<TelegramInstalledStickerSet>,
+    selectedNames: Set<String>,
+    onSelectionChange: (Set<String>) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    PanelFullOverlay(onDismiss = onDismiss) {
+        Text("选择 Telegram 表情包", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "已导入的表情包默认不选中；重新选择可以继续或更新导入。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            TextButton(
+                onClick = { onSelectionChange(sets.mapTo(linkedSetOf(), TelegramInstalledStickerSet::name)) },
+            ) { Text("全选") }
+            TextButton(onClick = { onSelectionChange(emptySet()) }) { Text("全不选") }
+            TextButton(
+                onClick = {
+                    onSelectionChange(
+                        invertPanelSelection(selectedNames, sets, TelegramInstalledStickerSet::name),
+                    )
+                },
+            ) { Text("反选") }
+            TextButton(
+                onClick = {
+                    onSelectionChange(
+                        closePanelSelectionRange(selectedNames, sets, TelegramInstalledStickerSet::name),
+                    )
+                },
+                enabled = selectedNames.size > 1,
+            ) { Text("连选") }
+        }
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp)
+                .weight(1f, fill = false),
+        ) {
+            items(sets, key = TelegramInstalledStickerSet::name) { set ->
+                val selected = set.name in selectedNames
+                ListItem(
+                    modifier = Modifier.clickable {
+                        onSelectionChange(
+                            if (selected) selectedNames - set.name else selectedNames + set.name,
+                        )
+                    },
+                    colors = panelListItemColors(),
+                    headlineContent = { Text(set.title) },
+                    supportingContent = { Text(set.name) },
+                    leadingContent = {
+                        Checkbox(
+                            checked = selected,
+                            onCheckedChange = {
+                                onSelectionChange(
+                                    if (selected) selectedNames - set.name else selectedNames + set.name,
+                                )
+                            },
+                        )
+                    },
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("已选择 ${selectedNames.size}/${sets.size}", style = MaterialTheme.typography.bodySmall)
+            Box(Modifier.weight(1f))
+            TextButton(onClick = onDismiss) { Text("取消") }
+            TextButton(onClick = onConfirm, enabled = selectedNames.isNotEmpty()) { Text("确定") }
+        }
+    }
+}
+
+@Composable
+private fun TelegramBatchImportProgressOverlay(
+    progress: TelegramBatchImportProgress,
+    onCancel: () -> Unit,
+) {
+    val itemProgress = progress.itemProgress
+    val itemFraction = itemProgress?.let { it.completed.toFloat() / it.total.coerceAtLeast(1) } ?: 0f
+    val overallProgress = ((progress.packIndex - 1) + itemFraction) / progress.packTotal.coerceAtLeast(1)
+    PanelFullOverlay(onDismiss = {}, allowImplicitDismiss = false) {
+        Text("正在批量导入 Telegram 表情包", style = MaterialTheme.typography.titleMedium)
+        LinearProgressIndicator(
+            progress = { overallProgress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "第 ${progress.packIndex}/${progress.packTotal} 个 · ${progress.packTitle}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (itemProgress != null) {
+            Text(
+                buildString {
+                    append(
+                        when (itemProgress.phase) {
+                            TelegramStickerImportPhase.DOWNLOAD -> "下载"
+                            TelegramStickerImportPhase.CONVERSION -> "转换"
+                        },
+                    )
+                    append(" ${itemProgress.completed}/${itemProgress.total}")
+                    itemProgress.currentItem?.takeIf(String::isNotBlank)?.let { append(" · $it") }
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onCancel) { Text("中断") }
+        }
+    }
+}
+
+@Composable
 private fun TelegramImportProgressOverlay(
     progress: TelegramStickerImportProgress,
     onCancel: () -> Unit,
 ) {
-    PanelFullOverlay(onDismiss = onCancel) {
+    PanelFullOverlay(onDismiss = onCancel, allowImplicitDismiss = false) {
         Text(
             when (progress.phase) {
                 TelegramStickerImportPhase.DOWNLOAD -> "正在下载 Telegram 表情包"
@@ -2264,6 +2550,9 @@ private fun StickerSettingsContent(
     var closePreviewAfterScrub by remember {
         mutableStateOf(PanelSettings.stickerClosePreviewAfterScrub)
     }
+    var onlinePreviewUseOriginal by remember {
+        mutableStateOf(PanelSettings.stickerOnlinePreviewUseOriginal)
+    }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var telegramTokenPrompt by remember { mutableStateOf(false) }
     var numberPrompt by remember { mutableStateOf(false) }
@@ -2303,6 +2592,22 @@ private fun StickerSettingsContent(
                             onCheckedChange = {
                                 closePreviewAfterScrub = it
                                 PanelSettings.stickerClosePreviewAfterScrub = it
+                            },
+                        )
+                    },
+                )
+            }
+            item {
+                ListItem(
+                    colors = panelListItemColors(),
+                    headlineContent = { Text("在线表情预览使用原图") },
+                    supportingContent = { Text("关闭后，大图预览将优先使用缩略图") },
+                    trailingContent = {
+                        Switch(
+                            checked = onlinePreviewUseOriginal,
+                            onCheckedChange = {
+                                onlinePreviewUseOriginal = it
+                                PanelSettings.stickerOnlinePreviewUseOriginal = it
                             },
                         )
                     },

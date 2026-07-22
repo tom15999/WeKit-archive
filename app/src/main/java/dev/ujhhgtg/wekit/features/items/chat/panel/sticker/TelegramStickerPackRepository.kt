@@ -64,6 +64,22 @@ object TelegramStickerPackRepository {
         return input.takeIf(stickerSetNameRegex::matches)
     }
 
+    fun importedStickerSetNames(): Set<String> = runCatching {
+        val localPackIds = StickerPanelRepository.loadPacks().mapTo(hashSetOf()) { it.id }
+        PanelPaths.telegramStickerImportDir.listDirectoryEntries()
+            .mapNotNull { directory ->
+                val manifest = readManifest(directory / "manifest.json") ?: return@mapNotNull null
+                manifest.setName.lowercase().takeIf {
+                    manifest.localPackName.isNotBlank() &&
+                            manifest.localPackName in localPackIds
+                }
+            }
+            .toSet()
+    }.getOrElse {
+        WeLogger.w(TAG, "failed to read imported sticker sets", it)
+        emptySet()
+    }
+
     suspend fun importStickerSet(
         value: String,
         onProgress: suspend (TelegramStickerImportProgress) -> Unit,

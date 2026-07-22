@@ -153,7 +153,7 @@ object ActivityProxy {
         const val TRANSPARENT_PROXY = "${PackageNames.WECHAT}.plugin.appbrand.ipc.AppBrandProxyTransparentUI"
 
         fun isModuleProxyActivity(className: String?): Boolean =
-            className?.startsWith(PackageNames.MODULE) == true
+            className?.startsWith(PackageNames.MODULE) == true && !className.contains("MainActivity")
     }
 
     private class IActivityManagerHandler(private val origin: Any) : InvocationHandler {

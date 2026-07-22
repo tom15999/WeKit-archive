@@ -72,12 +72,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -123,6 +125,7 @@ data class PanelAction(
     val label: String,
     val enabled: Boolean = true,
     val showLabel: Boolean = false,
+    val headerStart: Boolean = false,
     val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit,
 )
@@ -149,7 +152,7 @@ private fun PanelHeaderAction(
     val sizeDuration = if (isBackAction) 225 else 260
     AnimatedContent(
         targetState = action,
-        contentKey = { it != null },
+        contentKey = { it?.icon },
         contentAlignment = if (edge == Alignment.Start) Alignment.CenterStart else Alignment.CenterEnd,
         transitionSpec = {
             val enter = fadeIn(tween(if (isBackAction) 155 else 180, delayMillis = 30)) +
@@ -189,8 +192,23 @@ internal data class PanelImportOption<T>(
 )
 
 class PanelDialogScope internal constructor(private val dialog: Dialog) {
+    private var implicitDismissBlockCount = 0
+
+    internal val canDismissImplicitly: Boolean
+        get() = implicitDismissBlockCount == 0
+
+    internal fun blockImplicitDismiss() {
+        implicitDismissBlockCount++
+    }
+
+    internal fun unblockImplicitDismiss() {
+        implicitDismissBlockCount = (implicitDismissBlockCount - 1).coerceAtLeast(0)
+    }
+
     fun dismiss() = dialog.dismiss()
 }
+
+private val LocalPanelDialogScope = staticCompositionLocalOf<PanelDialogScope?> { null }
 
 @Suppress("DEPRECATION")
 fun showPanelDialog(
@@ -237,7 +255,10 @@ fun showPanelDialog(
     dialog.setContentView(
         ComposeView(wrapped).apply {
             setContent {
-                CompositionLocalProvider(LocalContext provides wrapped) {
+                CompositionLocalProvider(
+                    LocalContext provides wrapped,
+                    LocalPanelDialogScope provides scope,
+                ) {
                     InjectedUiTheme {
                         Box(
                             modifier = Modifier
@@ -246,7 +267,9 @@ fun showPanelDialog(
                                 .clickable(
                                     indication = null,
                                     interactionSource = null,
-                                    onClick = scope::dismiss,
+                                    onClick = {
+                                        if (scope.canDismissImplicitly) scope.dismiss()
+                                    },
                                 ),
                             contentAlignment = Alignment.BottomCenter,
                         ) {
@@ -313,9 +336,11 @@ fun <T> PanelShell(
     content: @Composable () -> Unit,
 ) {
     fun PanelAction.isHeaderAction(): Boolean =
-        icon == MaterialSymbols.Outlined.Arrow_back || icon == MaterialSymbols.Outlined.Refresh
+        headerStart || icon == MaterialSymbols.Outlined.Arrow_back || icon == MaterialSymbols.Outlined.Refresh
 
-    val backAction = actions.firstOrNull { it.icon == MaterialSymbols.Outlined.Arrow_back }
+    val backAction = actions.firstOrNull {
+        it.headerStart || it.icon == MaterialSymbols.Outlined.Arrow_back
+    }
     val refreshAction = actions.firstOrNull { it.icon == MaterialSymbols.Outlined.Refresh }
     val stripActions = actions.filterNot { it.isHeaderAction() }
     val stripActionSearch = actionSearch?.let { search ->
@@ -913,7 +938,7 @@ fun PanelConfirmation(
 
 @Composable
 fun PanelProgressOverlay(message: String, progress: Float? = null) {
-    PanelOverlay(onDismiss = {}) {
+    PanelFullOverlay(onDismiss = {}, allowImplicitDismiss = false) {
         Text(message, style = MaterialTheme.typography.titleMedium)
         if (progress == null) {
             CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
@@ -934,14 +959,28 @@ fun PanelProgressOverlay(message: String, progress: Float? = null) {
 @Composable
 fun PanelFullOverlay(
     onDismiss: () -> Unit,
+    allowImplicitDismiss: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    BackHandler(onBack = onDismiss)
+    val dialogScope = LocalPanelDialogScope.current
+    if (!allowImplicitDismiss) {
+        DisposableEffect(dialogScope) {
+            dialogScope?.blockImplicitDismiss()
+            onDispose { dialogScope?.unblockImplicitDismiss() }
+        }
+    }
+    BackHandler {
+        if (allowImplicitDismiss) onDismiss()
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.38f))
-            .clickable(indication = null, interactionSource = null, onClick = onDismiss),
+            .clickable(
+                indication = null,
+                interactionSource = null,
+                onClick = { if (allowImplicitDismiss) onDismiss() },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
@@ -995,4 +1034,4 @@ fun PanelPageOverlay(
 private fun PanelOverlay(
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
-) = PanelFullOverlay(onDismiss, content)
+) = PanelFullOverlay(onDismiss, content = content)

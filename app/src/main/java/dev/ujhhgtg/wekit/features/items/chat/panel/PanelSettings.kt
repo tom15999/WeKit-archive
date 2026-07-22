@@ -41,6 +41,10 @@ object PanelSettings {
         "sticker_panel_close_preview_after_scrub",
         true,
     )
+    var stickerOnlinePreviewUseOriginal by prefOption(
+        "sticker_panel_online_preview_use_original",
+        true,
+    )
     var stickerRemoveRoundedVideoMask by prefOption(
         "sticker_panel_remove_rounded_video_mask",
         false,
