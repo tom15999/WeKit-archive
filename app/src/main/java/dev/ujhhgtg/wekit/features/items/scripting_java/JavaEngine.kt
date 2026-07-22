@@ -40,7 +40,6 @@ import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.asPath
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.reflection.ClassLoaders
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
 import dev.ujhhgtg.wekit.utils.reflection.any
 import dev.ujhhgtg.wekit.utils.reflection.asClass
 import dev.ujhhgtg.wekit.utils.reflection.asConstructor
@@ -49,6 +48,7 @@ import dev.ujhhgtg.wekit.utils.reflection.bool
 import dev.ujhhgtg.wekit.utils.reflection.float
 import dev.ujhhgtg.wekit.utils.reflection.int
 import dev.ujhhgtg.wekit.utils.reflection.long
+import dev.ujhhgtg.wekit.utils.reflection.withDexKit
 import me.hd.wauxv.data.bean.ContactLabelBean
 import me.hd.wauxv.data.bean.MsgInfoBean
 import me.hd.wauxv.data.bean.info.FriendInfo
@@ -1472,27 +1472,31 @@ object JavaEngine {
                 @Suppress("UNCHECKED_CAST")
                 val usingStrings = it[0] as List<String>
                 return@BshMethod runCatchingBsh("findClassList") {
-                    DexKit.findClass {
-                        matcher {
-                            usingStrings(usingStrings)
-                        }
-                    }.map { data -> data.asClass }
+                    withDexKit { dexKit ->
+                        dexKit.findClass {
+                            matcher {
+                                usingStrings(usingStrings)
+                            }
+                        }.map { data -> data.asClass }
+                    }
                 }.getOrDefault(emptyList<Any>())
             })
             setMethod(BshMethod("findMemberList", arrayOf(List::class.java)) {
                 @Suppress("UNCHECKED_CAST")
                 val usingStrings = it[0] as List<String>
                 return@BshMethod runCatchingBsh("findMemberList") {
-                    DexKit.findMethod {
-                        matcher {
-                            usingStrings(usingStrings)
-                        }
-                    }.mapNotNull { data ->
-                        val name = data.name
-                        if (name == "<init>" || name == "<clinit>") {
-                            data.asConstructor
-                        } else {
-                            data.asMethod
+                    withDexKit { dexKit ->
+                        dexKit.findMethod {
+                            matcher {
+                                usingStrings(usingStrings)
+                            }
+                        }.mapNotNull { data ->
+                            val name = data.name
+                            if (name == "<init>" || name == "<clinit>") {
+                                data.asConstructor
+                            } else {
+                                data.asMethod
+                            }
                         }
                     }
                 }.getOrDefault(emptyList<Any>())

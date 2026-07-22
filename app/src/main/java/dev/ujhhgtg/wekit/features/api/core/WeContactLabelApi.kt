@@ -9,7 +9,6 @@ import dev.ujhhgtg.wekit.features.api.net.WeNetSceneApi
 import dev.ujhhgtg.wekit.features.core.ApiFeature
 import dev.ujhhgtg.wekit.features.core.Feature
 import dev.ujhhgtg.wekit.utils.WeLogger
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.result.FieldUsingType
 import java.util.LinkedList
@@ -151,7 +150,7 @@ object WeContactLabelApi : ApiFeature(), IResolveDex {
     private val classContactLabelPb by dexClass()
 
     override fun resolveDex(dexKit: DexKitBridge) {
-        val candidates = DexKit.findMethod {
+        val candidates = dexKit.findMethod {
             matcher {
                 usingEqStrings("UserLabelInfoList")
             }

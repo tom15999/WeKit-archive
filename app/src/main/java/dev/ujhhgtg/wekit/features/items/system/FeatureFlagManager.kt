@@ -49,7 +49,7 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
+import dev.ujhhgtg.wekit.utils.reflection.withDexKit
 import dev.ujhhgtg.wekit.utils.serialization.DefaultJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -231,22 +231,23 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
             withContext(Dispatchers.IO) {
                 val superClassName = classFeatureFlagBase.clazz.name
 
-                val results = DexKit.findClass {
-                    matcher {
-                        modifiers(JavaModifier.FINAL)
-                        anyOf(
-                            ClassMatcher().apply {
-                                // ly4.f subclasses: Concrete → f → e (2 levels)
-                                superClass { superClass = superClassName }
-                            },
-                            ClassMatcher().apply {
-                                // ly4.i subclasses: Concrete → i → d → e (3 levels)
-                                superClass { superClass { superClass = superClassName } }
-                            }
-                        )
-                    }
+                featureFlagClasses = withDexKit { dexKit ->
+                    dexKit.findClass {
+                        matcher {
+                            modifiers(JavaModifier.FINAL)
+                            anyOf(
+                                ClassMatcher().apply {
+                                    // ly4.f subclasses: Concrete → f → e (2 levels)
+                                    superClass { superClass = superClassName }
+                                },
+                                ClassMatcher().apply {
+                                    // ly4.i subclasses: Concrete → i → d → e (3 levels)
+                                    superClass { superClass { superClass = superClassName } }
+                                }
+                            )
+                        }
+                    }.map { it.name }.sorted()
                 }
-                featureFlagClasses = results.map { it.name }.sorted()
                 isLoading = false
             }
         }
@@ -591,4 +592,3 @@ object FeatureFlagManager : ClickableFeature(), IResolveDex {
         )
     }
 }
-

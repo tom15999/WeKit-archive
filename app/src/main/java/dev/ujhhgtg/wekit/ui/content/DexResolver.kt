@@ -33,7 +33,7 @@ import dev.ujhhgtg.wekit.features.core.BaseFeature
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.copyToClipboard
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.reflection.DexKit
+import dev.ujhhgtg.wekit.utils.reflection.withDexKitSuspending
 import dev.ujhhgtg.wekit.utils.restartHost
 import dev.ujhhgtg.wekit.utils.unreachable
 import kotlinx.coroutines.CoroutineScope
@@ -133,19 +133,21 @@ fun DexResolver(
                 }
 
                 // parallel scan — same flow/buffer/async structure
-                val results = outdatedItems.asFlow()
-                    .map { item ->
-                        async(Dispatchers.IO) {
-                            scanItem(
-                                item,
-                                DexKit,
-                                progressChannel
-                            )
+                val results = withDexKitSuspending { dexKit ->
+                    outdatedItems.asFlow()
+                        .map { item ->
+                            async(Dispatchers.IO) {
+                                scanItem(
+                                    item,
+                                    dexKit,
+                                    progressChannel
+                                )
+                            }
                         }
-                    }
-                    .buffer(8)
-                    .map { it.await() }
-                    .toList()
+                        .buffer(8)
+                        .map { it.await() }
+                        .toList()
+                }
 
                 progressChannel.close()
 
