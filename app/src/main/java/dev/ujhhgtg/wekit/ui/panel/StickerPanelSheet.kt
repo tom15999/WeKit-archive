@@ -1773,6 +1773,14 @@ private fun StickerPackThumbnail(pack: StickerPack, modifier: Modifier = Modifie
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
+        if (pack.source == PanelSource.LOCAL) {
+            SendCountBadge(
+                count = pack.items.sumOf(StickerItem::sendCount),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            )
+        }
     }
 }
 

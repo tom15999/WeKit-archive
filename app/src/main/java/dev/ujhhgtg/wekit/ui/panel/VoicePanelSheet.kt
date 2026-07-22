@@ -76,6 +76,7 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.CloneVoice
 import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
 import dev.ujhhgtg.wekit.features.items.chat.panel.PANEL_BULK_DOWNLOAD_CONCURRENCY
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
+import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelUiState
 import dev.ujhhgtg.wekit.features.items.chat.panel.RECENT_PACK_ID
 import dev.ujhhgtg.wekit.features.items.chat.panel.VoiceDestination
@@ -1907,7 +1908,7 @@ private fun VoicePackList(
                         Text(pack.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
                     supportingContent = { Text("${pack.itemCount} 条语音") },
-                    leadingContent = { Icon(MaterialSymbols.Outlined.Folder, null) },
+                    leadingContent = { VoicePackIcon(pack) },
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             }
@@ -1932,7 +1933,7 @@ private fun VoicePackReorderContent(
                 Text(pack.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
             },
             supportingContent = { Text("${pack.itemCount} 条语音") },
-            leadingContent = { Icon(MaterialSymbols.Outlined.Folder, null) },
+            leadingContent = { VoicePackIcon(pack) },
             trailingContent = {
                 Box(
                     modifier = Modifier
@@ -1948,6 +1949,22 @@ private fun VoicePackReorderContent(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun VoicePackIcon(pack: VoicePack) {
+    Box(
+        modifier = Modifier.size(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(MaterialSymbols.Outlined.Folder, contentDescription = null)
+        if (pack.source == PanelSource.LOCAL) {
+            SendCountBadge(
+                count = pack.items.sumOf(VoiceItem::sendCount),
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+        }
     }
 }
 
