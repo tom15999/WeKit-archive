@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -59,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -248,6 +251,7 @@ private fun StickerPanelContent(
     var myUploadsRequest by remember { mutableIntStateOf(0) }
     var showingMyUploads by remember { mutableStateOf(false) }
     var selectedOnlinePackId by remember { mutableStateOf<String?>(null) }
+    var pendingOnlinePackId by remember { mutableStateOf<String?>(null) }
     var onlineItemsState by remember { mutableStateOf<PanelUiState<List<StickerItem>>>(PanelUiState.Empty("选择一个在线表情包")) }
     var onlineItemsRequest by remember { mutableIntStateOf(0) }
     var searchState by remember { mutableStateOf<PanelUiState<List<StickerItem>>>(PanelUiState.Empty("输入关键词搜索在线表情")) }
@@ -311,39 +315,6 @@ private fun StickerPanelContent(
         }
     }
 
-    fun loadOnlinePacks() {
-        val request = ++onlinePacksRequest
-        onlinePacksState = PanelUiState.Loading
-        scope.launch {
-            val result = actions.loadOnlinePacks()
-            if (request != onlinePacksRequest) return@launch
-            onlinePacksState = result.fold(
-                onSuccess = {
-                    if (selectedOnlinePackId !in it.map(StickerPack::id)) {
-                        selectedOnlinePackId = null
-                        onlineItemsRequest++
-                        onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
-                    }
-                    if (it.isEmpty()) PanelUiState.Empty("暂无在线表情包") else PanelUiState.Content(it)
-                },
-                onFailure = { PanelUiState.Error(it.message ?: "在线表情包加载失败") },
-            )
-        }
-    }
-
-    fun loadMyUploads() {
-        val request = ++myUploadsRequest
-        myUploadsState = PanelUiState.Loading
-        scope.launch {
-            val result = actions.loadMyUploads()
-            if (request != myUploadsRequest || !showingMyUploads) return@launch
-            myUploadsState = result.fold(
-                onSuccess = { if (it.isEmpty()) PanelUiState.Empty("还没有上传表情包") else PanelUiState.Content(it) },
-                onFailure = { PanelUiState.Error(it.message ?: "我的上传加载失败") },
-            )
-        }
-    }
-
     fun loadOnlinePack(pack: StickerPack) {
         val request = ++onlineItemsRequest
         onlineItemsState = PanelUiState.Loading
@@ -356,6 +327,87 @@ private fun StickerPanelContent(
                     if (unique.isEmpty()) PanelUiState.Empty("这个表情包还是空的") else PanelUiState.Content(unique)
                 },
                 { PanelUiState.Error(it.message ?: "表情加载失败") },
+            )
+        }
+    }
+
+    fun loadOnlinePacks() {
+        if (onlinePacksState == PanelUiState.Loading && onlinePacksRequest > 0) return
+        val request = ++onlinePacksRequest
+        onlinePacksState = PanelUiState.Loading
+        scope.launch {
+            val result = actions.loadOnlinePacks()
+            if (request != onlinePacksRequest) return@launch
+            onlinePacksState = result.fold(
+                onSuccess = { packs ->
+                    val requestedPackId = pendingOnlinePackId
+                    pendingOnlinePackId = null
+                    val requestedPack = packs.firstOrNull { it.id == requestedPackId }
+                    if (requestedPackId != null) {
+                        if (requestedPack == null) {
+                            selectedOnlinePackId = null
+                            onlineItemsRequest++
+                            onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
+                            operationMessage = "未找到该表情所属的在线表情包"
+                        } else {
+                            selectedOnlinePackId = requestedPack.id
+                            scope.launch { onlineItemGridState.scrollToItem(0) }
+                            loadOnlinePack(requestedPack)
+                        }
+                    } else if (selectedOnlinePackId !in packs.map(StickerPack::id)) {
+                        selectedOnlinePackId = null
+                        onlineItemsRequest++
+                        onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
+                    }
+                    if (packs.isEmpty()) PanelUiState.Empty("暂无在线表情包")
+                    else PanelUiState.Content(packs)
+                },
+                onFailure = {
+                    pendingOnlinePackId = null
+                    PanelUiState.Error(it.message ?: "在线表情包加载失败")
+                },
+            )
+        }
+    }
+
+    fun openOnlinePackForSticker(sticker: StickerItem) {
+        val packId = sticker.packId.takeIf(String::isNotBlank) ?: run {
+            operationMessage = "无法确定该表情所属的在线表情包"
+            return
+        }
+        previewSticker = null
+        showingMyUploads = false
+        onlinePackSearchExpanded = false
+        onlinePackQuery = ""
+        multiSelectMode = false
+        selectedStickerKeys = emptySet()
+        destination = StickerDestination.ONLINE
+
+        val knownPack = (onlinePacksState as? PanelUiState.Content)?.value
+            ?.firstOrNull { it.id == packId }
+        if (knownPack != null) {
+            pendingOnlinePackId = null
+            selectedOnlinePackId = knownPack.id
+            scope.launch { onlineItemGridState.scrollToItem(0) }
+            loadOnlinePack(knownPack)
+        } else {
+            selectedOnlinePackId = null
+            onlineItemsRequest++
+            onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
+            pendingOnlinePackId = packId
+            loadOnlinePacks()
+        }
+    }
+
+    fun loadMyUploads() {
+        val request = ++myUploadsRequest
+        myUploadsState = PanelUiState.Loading
+        scope.launch {
+            val result = actions.loadMyUploads()
+            if (request != myUploadsRequest || !showingMyUploads) return@launch
+            myUploadsState = result.fold(
+                onSuccess = { if (it.isEmpty()) PanelUiState.Empty("还没有上传表情包") else PanelUiState.Content(it) },
+                onFailure = { PanelUiState.Error(it.message ?: "我的上传加载失败") },
             )
         }
     }
@@ -843,6 +895,7 @@ private fun StickerPanelContent(
                         message = "还没有发送过表情",
                         onSend = ::send,
                         onLongPress = { previewSticker = it },
+                        onPreviewGestureEnd = { previewSticker = null },
                     )
                 }
 
@@ -855,6 +908,7 @@ private fun StickerPanelContent(
                         emptyMessage = if (query.isBlank()) "输入文件名或表情包名称" else "没有找到本地表情",
                         onSend = ::send,
                         onLongPress = { previewSticker = it },
+                        onPreviewGestureEnd = { previewSticker = null },
                     )
                 }
 
@@ -881,6 +935,7 @@ private fun StickerPanelContent(
                         },
                         onSend = ::send,
                         onLongPress = { previewSticker = it },
+                        onPreviewGestureEnd = { previewSticker = null },
                         selectable = multiSelectMode && localDetailPack != null,
                         selectedKeys = selectedStickerKeys,
                         onToggleSelection = { sticker ->
@@ -942,6 +997,7 @@ private fun StickerPanelContent(
                             message = "暂无表情",
                             onSend = ::send,
                             onLongPress = { sticker -> previewSticker = sticker },
+                            onPreviewGestureEnd = { previewSticker = null },
                             gridState = onlineItemGridState,
                             selectable = multiSelectMode,
                             selectedKeys = selectedStickerKeys,
@@ -999,6 +1055,7 @@ private fun StickerPanelContent(
                     emptyMessage = "输入关键词搜索在线表情",
                     onSend = ::send,
                     onLongPress = { previewSticker = it },
+                    onPreviewGestureEnd = { previewSticker = null },
                 )
 
                 StickerDestination.SETTINGS -> StickerSettingsContent(
@@ -1052,6 +1109,11 @@ private fun StickerPanelContent(
                     previewSticker = null
                     prompt = StickerPrompt.ConfirmSimilaritySticker(item)
                 },
+                onOpenPack = if (
+                    destination == StickerDestination.ONLINE_SEARCH && item.packId.isNotBlank()
+                ) ({
+                    openOnlinePackForSticker(item)
+                }) else null,
                 onSetTitle = if (item.localPath != null) ({
                     previewSticker = null
                     prompt = StickerPrompt.SetStickerTitle(item)
@@ -1295,6 +1357,7 @@ private fun StickerGridOrEmpty(
     message: String,
     onSend: (StickerItem) -> Unit,
     onLongPress: (StickerItem) -> Unit,
+    onPreviewGestureEnd: () -> Unit,
     modifier: Modifier = Modifier,
     gridState: LazyGridState = rememberLazyGridState(),
     selectable: Boolean = false,
@@ -1308,6 +1371,62 @@ private fun StickerGridOrEmpty(
         return
     }
     val gestureScope = rememberCoroutineScope()
+    val previewGesture = remember { StickerPreviewGestureTracker() }
+    val previewGestureModifier = if (!selectable) {
+        Modifier.pointerInput(stickers, gridState, previewGesture) {
+            awaitEachGesture {
+                val down = awaitFirstDown(
+                    requireUnconsumed = false,
+                    pass = PointerEventPass.Initial,
+                )
+                previewGesture.begin(down.position)
+                while (true) {
+                    val change = awaitPointerEvent(PointerEventPass.Initial).changes
+                        .firstOrNull { it.id == down.id }
+                    if (change == null) {
+                        if (previewGesture.active && previewGesture.moved &&
+                            PanelSettings.stickerClosePreviewAfterScrub
+                        ) {
+                            onPreviewGestureEnd()
+                        }
+                        previewGesture.reset()
+                        break
+                    }
+
+                    previewGesture.lastPosition = change.position
+                    if (previewGesture.active) {
+                        if (!previewGesture.moved &&
+                            (change.position - previewGesture.activationPosition).getDistance() >=
+                            viewConfiguration.touchSlop
+                        ) {
+                            previewGesture.moved = true
+                        }
+                        if (previewGesture.moved) {
+                            change.consume()
+                            gridState.itemIndexAt(change.position)?.let { index ->
+                                if (index != previewGesture.currentIndex) {
+                                    stickers.getOrNull(index)?.let { sticker ->
+                                        previewGesture.currentIndex = index
+                                        onLongPress(sticker)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!change.pressed) {
+                        if (previewGesture.active && previewGesture.moved &&
+                            PanelSettings.stickerClosePreviewAfterScrub
+                        ) {
+                            onPreviewGestureEnd()
+                        }
+                        previewGesture.reset()
+                        break
+                    }
+                }
+            }
+        }
+    } else Modifier
     val dragModifier = if (selectable && onSelectRange != null) {
         Modifier.pointerInput(stickers, gridState) {
             var start = -1
@@ -1377,12 +1496,13 @@ private fun StickerGridOrEmpty(
         state = gridState,
         modifier = modifier
             .fillMaxSize()
-            .then(dragModifier),
+            .then(dragModifier)
+            .then(previewGestureModifier),
         contentPadding = PaddingValues(6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        itemsIndexed(keyedStickers, key = { _, it -> it.first }) { _, keyedSticker ->
+        itemsIndexed(keyedStickers, key = { _, it -> it.first }) { index, keyedSticker ->
             val sticker = keyedSticker.second
             val context = LocalContext.current
             val imageData = sticker.localPath ?: sticker.thumbnailUrl
@@ -1396,7 +1516,10 @@ private fun StickerGridOrEmpty(
                         onClick = {
                             if (selectable) onToggleSelection?.invoke(sticker) else onSend(sticker)
                         },
-                        onLongClick = if (selectable) null else ({ onLongPress(sticker) }),
+                        onLongClick = if (selectable) null else ({
+                            previewGesture.activate(index)
+                            onLongPress(sticker)
+                        }),
                     )
                     .padding(2.dp),
             ) {
@@ -1432,6 +1555,32 @@ private fun StickerGridOrEmpty(
     }
 }
 
+private class StickerPreviewGestureTracker {
+    var active = false
+    var moved = false
+    var activationPosition = Offset.Zero
+    var lastPosition = Offset.Zero
+    var currentIndex = -1
+
+    fun begin(position: Offset) {
+        reset()
+        lastPosition = position
+    }
+
+    fun activate(index: Int) {
+        active = true
+        moved = false
+        activationPosition = lastPosition
+        currentIndex = index
+    }
+
+    fun reset() {
+        active = false
+        moved = false
+        currentIndex = -1
+    }
+}
+
 private fun stickerSelectionKey(item: StickerItem): String = item.remoteObjectId ?: item.id
 
 private fun LazyGridState.itemIndexAt(position: Offset): Int? = layoutInfo.visibleItemsInfo
@@ -1453,6 +1602,7 @@ private fun SearchStickerContent(
     emptyMessage: String,
     onSend: (StickerItem) -> Unit,
     onLongPress: (StickerItem) -> Unit,
+    onPreviewGestureEnd: () -> Unit,
     state: PanelUiState<List<StickerItem>>? = null,
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -1479,7 +1629,13 @@ private fun SearchStickerContent(
             PanelStateContent(state, content = {})
         } else {
             Box(Modifier.weight(1f)) {
-                StickerGridOrEmpty(results, emptyMessage, onSend, onLongPress)
+                StickerGridOrEmpty(
+                    stickers = results,
+                    message = emptyMessage,
+                    onSend = onSend,
+                    onLongPress = onLongPress,
+                    onPreviewGestureEnd = onPreviewGestureEnd,
+                )
             }
         }
     }
@@ -1506,6 +1662,7 @@ private fun LocalPacksContent(
     onImport: () -> Unit,
     onSend: (StickerItem) -> Unit,
     onLongPress: (StickerItem) -> Unit,
+    onPreviewGestureEnd: () -> Unit,
     selectable: Boolean,
     selectedKeys: Set<String>,
     onToggleSelection: (StickerItem) -> Unit,
@@ -1530,7 +1687,13 @@ private fun LocalPacksContent(
                 if (filterActive) PanelEmptyAction("当前表情包没有匹配的表情")
                 else PanelEmptyAction("这个表情包还是空的", "导入表情", onImport)
             } else {
-                    StickerGridOrEmpty(selectedPack.items, "暂无表情", onSend, onLongPress)
+                    StickerGridOrEmpty(
+                        stickers = selectedPack.items,
+                        message = "暂无表情",
+                        onSend = onSend,
+                        onLongPress = onLongPress,
+                        onPreviewGestureEnd = onPreviewGestureEnd,
+                    )
                 }
             }
         }
@@ -1557,6 +1720,7 @@ private fun LocalPacksContent(
             message = "暂无表情",
             onSend = onSend,
             onLongPress = onLongPress,
+            onPreviewGestureEnd = onPreviewGestureEnd,
             gridState = itemGridState,
             selectable = selectable,
             selectedKeys = selectedKeys,
@@ -1840,6 +2004,7 @@ private fun StickerPreviewOverlay(
     onDismiss: () -> Unit,
     onSend: () -> Unit,
     onSearchSimilar: () -> Unit,
+    onOpenPack: (() -> Unit)?,
     onSave: (() -> Unit)?,
     onSetTitle: (() -> Unit)?,
     onSetCover: (() -> Unit)?,
@@ -1886,6 +2051,7 @@ private fun StickerPreviewOverlay(
             ) {
                 TextButton(onClick = onSend) { Text("发送") }
                 TextButton(onClick = onSearchSimilar) { Text("搜索相似") }
+                if (onOpenPack != null) TextButton(onClick = onOpenPack) { Text("查看表情包") }
                 if (onSave != null) TextButton(onClick = onSave) { Text("保存到本地") }
                 if (onSetTitle != null) TextButton(onClick = onSetTitle) { Text("设置名称") }
                 if (onSetCover != null) TextButton(onClick = onSetCover) { Text("设置为封面") }
@@ -2049,6 +2215,9 @@ private fun StickerSettingsContent(
     var removeRoundedVideoMask by remember {
         mutableStateOf(PanelSettings.stickerRemoveRoundedVideoMask)
     }
+    var closePreviewAfterScrub by remember {
+        mutableStateOf(PanelSettings.stickerClosePreviewAfterScrub)
+    }
     var clientIdPrompt by remember { mutableStateOf(false) }
     var telegramTokenPrompt by remember { mutableStateOf(false) }
     var numberPrompt by remember { mutableStateOf(false) }
@@ -2072,6 +2241,22 @@ private fun StickerSettingsContent(
                             onCheckedChange = {
                                 removeRoundedVideoMask = it
                                 PanelSettings.stickerRemoveRoundedVideoMask = it
+                            },
+                        )
+                    },
+                )
+            }
+            item {
+                ListItem(
+                    colors = panelListItemColors(),
+                    headlineContent = { Text("移动预览松手后自动关闭") },
+                    supportingContent = { Text("长按表情并移动手指后，松手时关闭大图预览") },
+                    trailingContent = {
+                        Switch(
+                            checked = closePreviewAfterScrub,
+                            onCheckedChange = {
+                                closePreviewAfterScrub = it
+                                PanelSettings.stickerClosePreviewAfterScrub = it
                             },
                         )
                     },

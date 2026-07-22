@@ -36,6 +36,10 @@ object PanelSettings {
         DEFAULT_FUNBOX_API_CLIENT_WXID,
     )
     var telegramBotToken by prefOption("sticker_panel_telegram_bot_token", "")
+    var stickerClosePreviewAfterScrub by prefOption(
+        "sticker_panel_close_preview_after_scrub",
+        true,
+    )
     var stickerRemoveRoundedVideoMask by prefOption(
         "sticker_panel_remove_rounded_video_mask",
         false,
