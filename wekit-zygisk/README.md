@@ -7,16 +7,28 @@ The module is disabled for every process immediately after installation.
 
 Open the WeKit module page in KernelSU to manage injection targets.
 
-- The first page open scans every Android user and adds every installed
-  `com.tencent.mm` instance as a disabled target.
+- The first page open scans every Android user and adds every installed package
+  matching `PackageNames.isWeChat` (`com.tencent.mm*`) as a disabled target.
 - Enabling one instance injects its main process and every process named
   `<package>:...` for that same Android user at the next process launch.
-- The add dialog lists installed packages for every Android user. Added entries
-  are disabled initially. Delete removes one entry; reset removes all entries
-  and runs the initial WeChat scan again.
+- Refresh scans all Android users again, replaces the package membership with
+  the current result, preserves switches for surviving rows, and disables newly
+  discovered rows. The WebUI intentionally has no manual add or delete action.
 
 The persisted target list is `/data/adb/wekit/injection-targets.tsv`. Module
-updates retain it; reset and uninstall remove it without touching app data.
+updates retain it; uninstall removes it without touching app data.
+
+## Hot Update
+
+The installer exports `MODULE_HOT_INSTALL_REQUEST=true`, the hot-install
+request used by compatible KernelSU-family root managers. On such a manager an
+updated module is activated without a device reboot. Stop and restart WeChat
+after the update: the Zygisk companion opens the active ABI-specific payload
+for every newly specialized WeChat process, so it receives the updated APK.
+
+This does not replace code in an already running WeChat process. Root managers
+that do not implement the hot-install protocol retain their normal reboot or
+restart requirements.
 
 ## Build
 

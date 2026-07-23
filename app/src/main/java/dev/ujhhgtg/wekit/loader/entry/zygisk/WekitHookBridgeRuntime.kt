@@ -1,11 +1,13 @@
 package dev.ujhhgtg.wekit.loader.entry.zygisk
 
 import androidx.annotation.Keep
+import dev.ujhhgtg.wekit.loader.abc.IHookBridge
 import dev.ujhhgtg.wekit.utils.WeLogger
 import java.lang.reflect.Constructor
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Member
 import java.lang.reflect.Method
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
@@ -24,8 +26,13 @@ internal object WekitHookBridgeRuntime {
 
     // ── Internal types ────────────────────────────────────────────────────────
 
-    internal data class PrioritizedCallback(
-        val callback: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback,
+    /**
+     * One concrete callback registration. This deliberately keeps identity
+     * equality: two hook handles may wrap the same callback object, and each
+     * handle must be able to unhook only its own registration.
+     */
+    internal class PrioritizedCallback(
+        val callback: IHookBridge.IMemberHookCallback,
         val priority: Int,
     )
 
@@ -42,11 +49,16 @@ internal object WekitHookBridgeRuntime {
         override val member: Member,
         override val thisObject: Any?,
         val mutableArgs: Array<Any?>,
-    ) : dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookParam {
+    ) : IHookBridge.IMemberHookParam {
         override val args: Array<Any?> get() = mutableArgs
         private var resultValue: Any? = null
         private var throwableValue: Throwable? = null
         internal var resultSet: Boolean = false
+        // Legacy Xposed gives each callback registration its own extra slot.
+        // IdentityHashMap is intentional: two registrations may wrap the same
+        // callback object but must still not share state.
+        private val callbackExtras = IdentityHashMap<PrioritizedCallback, Any?>()
+        private var activeCallback: PrioritizedCallback? = null
 
         override var result: Any?
             get() = resultValue
@@ -70,8 +82,30 @@ internal object WekitHookBridgeRuntime {
                 resultSet = false
                 earlyReturn = true
             }
-        override var extra: Any? = null
+        override var extra: Any?
+            get() = activeCallback?.let { callbackExtras[it] }
+            set(value) {
+                // The compat wrappers expose extra only while a callback is
+                // executing. Match that behavior outside a callback with a
+                // harmless null read/no-op write.
+                activeCallback?.let { callbackExtras[it] = value }
+            }
         internal var earlyReturn = false
+
+        internal fun <T> withCallback(callback: PrioritizedCallback, block: () -> T): T {
+            val previous = activeCallback
+            activeCallback = callback
+            return try {
+                block()
+            } finally {
+                activeCallback = previous
+            }
+        }
+
+        internal fun clearCallbackState() {
+            activeCallback = null
+            callbackExtras.clear()
+        }
 
         /** State XposedBridge restores when one callback throws. */
         internal data class State(
@@ -137,25 +171,44 @@ internal object WekitHookBridgeRuntime {
         memberToHookId.remove(entry.member, hookId)
     }
 
-    fun addCallback(hookId: Long, callback: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback, priority: Int) {
-        val entry = hooks[hookId] ?: return
+    fun addCallback(
+        hookId: Long,
+        callback: IHookBridge.IMemberHookCallback,
+        priority: Int,
+    ): PrioritizedCallback {
+        val entry = requireNotNull(hooks[hookId]) {
+            "WekitHookBridgeRuntime: no entry for hookId=$hookId"
+        }
         val pc = PrioritizedCallback(callback, priority)
-        val list = entry.callbacks
+        insertCallback(entry.callbacks, pc)
+        return pc
+    }
+
+    fun removeCallback(hookId: Long, registration: PrioritizedCallback): Boolean =
+        hooks[hookId]?.callbacks?.remove(registration) == true
+
+    /** Restore a registration after a final native unhook attempt fails. */
+    fun restoreCallback(hookId: Long, registration: PrioritizedCallback): Boolean {
+        val entry = hooks[hookId] ?: return false
+        insertCallback(entry.callbacks, registration)
+        return true
+    }
+
+    private fun insertCallback(
+        list: CopyOnWriteArrayList<PrioritizedCallback>,
+        callback: PrioritizedCallback,
+    ) {
         // CopyOnWriteArrayList.add(index, value) publishes one complete new
         // backing array. Do not rebuild through clear()+addAll(): readers are
         // intentionally lock-free and could otherwise observe an empty list.
         synchronized(list) {
-            val idx = list.indexOfFirst { it.priority < priority }
+            val idx = list.indexOfFirst { it.priority < callback.priority }
             if (idx == -1) {
-                list.add(pc)
+                list.add(callback)
             } else {
-                list.add(idx, pc)
+                list.add(idx, callback)
             }
         }
-    }
-
-    fun removeCallback(hookId: Long, callback: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback) {
-        hooks[hookId]?.callbacks?.removeIf { it.callback === callback }
     }
 
     fun getEntry(hookId: Long): HookEntry? = hooks[hookId]
@@ -186,7 +239,7 @@ internal object WekitHookBridgeRuntime {
         for (pc in snapshot) {
             if (param.earlyReturn) break
             try {
-                pc.callback.beforeHookedMember(param)
+                param.withCallback(pc) { pc.callback.beforeHookedMember(param) }
             } catch (t: Throwable) {
                 // Match XposedBridge: log and swallow callback failures.  A hook
                 // callback must use param.throwable when it intentionally wants
@@ -202,15 +255,19 @@ internal object WekitHookBridgeRuntime {
             try {
                 val backup = entry.backupMethod
                 backup.isAccessible = true
+                // IMemberHookParam.args aliases the bridge array. Passing it
+                // explicitly documents that before callbacks can mutate the
+                // arguments observed by the original implementation.
+                val invocationArgs = param.args
                 val result = when (entry.member) {
                     is Constructor<*> -> {
-                        backup.invoke(thisObj, *args)
+                        backup.invoke(thisObj, *invocationArgs)
                         null
                     }
                     is Method -> if (java.lang.reflect.Modifier.isStatic(entry.member.modifiers)) {
-                        backup.invoke(null, *args)
+                        backup.invoke(null, *invocationArgs)
                     } else {
-                        backup.invoke(thisObj, *args)
+                        backup.invoke(thisObj, *invocationArgs)
                     }
                     else -> error("unsupported member: ${entry.member}")
                 }
@@ -223,11 +280,11 @@ internal object WekitHookBridgeRuntime {
         }
 
         // ── after callbacks ───────────────────────────────────────────────────
-        for (index in (beforeCount - 1) downTo 0) {
+        for (index in beforeCount - 1 downTo 0) {
             val pc = snapshot[index]
             val beforeAfter = param.snapshot()
             try {
-                pc.callback.afterHookedMember(param)
+                param.withCallback(pc) { pc.callback.afterHookedMember(param) }
             } catch (t: Throwable) {
                 // Xposed restores the value visible on entry to this callback,
                 // then continues with the remaining after callbacks.
@@ -236,8 +293,11 @@ internal object WekitHookBridgeRuntime {
             }
         }
 
-        param.throwable?.let { throw it }
-        return param.result
+        val finalThrowable = param.throwable
+        val finalResult = param.result
+        param.clearCallbackState()
+        finalThrowable?.let { throw it }
+        return finalResult
     }
 
     // ── Invoke original (from IHookBridge.invokeOriginalMethod) ──────────────
@@ -263,7 +323,7 @@ internal object WekitHookBridgeRuntime {
                 else -> error("unsupported member: $member")
             }
         } catch (e: InvocationTargetException) {
-            throw (e.targetException ?: e)
+            throw e.targetException ?: e
         }
     }
 }

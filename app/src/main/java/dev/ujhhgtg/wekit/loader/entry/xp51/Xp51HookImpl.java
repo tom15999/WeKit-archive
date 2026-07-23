@@ -38,11 +38,6 @@ public class Xp51HookImpl implements IHookBridge, ILoaderService {
         return getLoaderName();
     }
 
-    @Override
-    public int getApiLevel() {
-        return XposedBridge.getXposedVersion();
-    }
-
     @NonNull
     @Override
     public String getFrameworkName() {

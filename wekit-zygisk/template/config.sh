@@ -7,7 +7,9 @@ STATE_DIR=/data/adb/wekit
 TARGETS_FILE=$STATE_DIR/injection-targets.tsv
 LOCK_DIR=$STATE_DIR/.injection-targets.lock
 LOCK_RETRIES=10
-TARGET_PACKAGE=com.tencent.mm
+# Keep this in lockstep with PackageNames.isWeChat(packageName):
+# packageName.startsWith("com.tencent.mm").
+TARGET_PACKAGE_PREFIX=com.tencent.mm
 
 # Every temporary replacement file is published with rename(2). Set this before
 # any redirection so it is private even during construction.
@@ -106,12 +108,17 @@ is_valid_package() {
   esac
 }
 
-is_installed_for_user() {
+is_wechat_package() {
+  case "$1" in
+    "$TARGET_PACKAGE_PREFIX"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+list_installed_packages_for_user() {
   user_id=$1
-  package_name=$2
-  cmd package list packages --user "$user_id" 2>/dev/null |
-    sed -n 's/^package://p' |
-    grep -F -x "$package_name" >/dev/null 2>&1
+  cmd package list packages --user "$user_id" 2>/dev/null ||
+    pm list packages --user "$user_id" 2>/dev/null
 }
 
 write_default_header() {
@@ -119,81 +126,103 @@ write_default_header() {
   printf '%s\n' '# userId<TAB>packageName<TAB>enabled'
 }
 
-write_scan_result_locked() {
+collect_wechat_targets_locked() {
+  scan_file=$1
+  packages_file=$STATE_DIR/.injection-targets.packages.$$
+  unsorted_file=$STATE_DIR/.injection-targets.unsorted.$$
+  : > "$unsorted_file" || return 1
+
+  for user_id in $(list_user_ids); do
+    is_valid_user_id "$user_id" || continue
+    if ! list_installed_packages_for_user "$user_id" > "$packages_file"; then
+      rm -f "$packages_file" "$unsorted_file"
+      return 1
+    fi
+    sed -n 's/^package://p' "$packages_file" |
+      while IFS= read -r package_name; do
+        is_valid_package "$package_name" || continue
+        is_wechat_package "$package_name" || continue
+        printf '%s\t%s\n' "$user_id" "$package_name" >> "$unsorted_file"
+      done || {
+        rm -f "$packages_file" "$unsorted_file"
+        return 1
+      }
+  done
+  rm -f "$packages_file"
+  LC_ALL=C sort -u -k1,1n -k2,2 "$unsorted_file" > "$scan_file"
+  status=$?
+  rm -f "$unsorted_file"
+  return "$status"
+}
+
+# Refresh membership from the package manager while preserving each surviving
+# target's explicit toggle. Every newly discovered package starts disabled.
+refresh_targets_locked() {
   ensure_state_dir || return 1
+  scan_file=$STATE_DIR/.injection-targets.scan.$$
   temp_file=$TARGETS_FILE.tmp.$$
+  collect_wechat_targets_locked "$scan_file" || {
+    rm -f "$scan_file"
+    return 1
+  }
+
+  previous_file=$TARGETS_FILE
+  [ -f "$previous_file" ] || previous_file=/dev/null
   (
     umask 077
     write_default_header
-    for user_id in $(list_user_ids); do
-      if is_installed_for_user "$user_id" "$TARGET_PACKAGE"; then
-        printf '%s\t%s\t0\n' "$user_id" "$TARGET_PACKAGE"
-      fi
-    done
-  ) > "$temp_file" || {
+    awk -F '\t' -v OFS='\t' -v prefix="$TARGET_PACKAGE_PREFIX" '
+      NR == FNR {
+        if (NF == 3 && $1 ~ /^[0-9]+$/ && index($2, prefix) == 1 &&
+            ($3 == "0" || $3 == "1")) {
+          enabled[$1 SUBSEP $2] = $3
+        }
+        next
+      }
+      NF == 2 && $1 ~ /^[0-9]+$/ && index($2, prefix) == 1 {
+        key = $1 SUBSEP $2
+        print $1, $2, (key in enabled ? enabled[key] : "0")
+      }
+    ' "$previous_file" "$scan_file"
+  ) > "$temp_file"
+  status=$?
+  rm -f "$scan_file"
+  if [ "$status" -ne 0 ]; then
     rm -f "$temp_file"
-    return 1
-  }
+    return "$status"
+  fi
   chmod 600 "$temp_file" || {
     rm -f "$temp_file"
     return 1
   }
-  mv -f "$temp_file" "$TARGETS_FILE"
+  mv -f "$temp_file" "$TARGETS_FILE" || {
+    rm -f "$temp_file"
+    return 1
+  }
 }
 
 ensure_initialized_locked() {
   if [ ! -f "$TARGETS_FILE" ]; then
-    write_scan_result_locked
+    refresh_targets_locked
   fi
 }
 
 list_targets_locked() {
   ensure_initialized_locked || return 1
-  awk -F '\t' 'NF == 3 && $1 ~ /^[0-9]+$/ && $2 != "" && ($3 == "0" || $3 == "1") { print $1 "\t" $2 "\t" $3 }' "$TARGETS_FILE"
+  awk -F '\t' -v prefix="$TARGET_PACKAGE_PREFIX" '
+    NF == 3 && $1 ~ /^[0-9]+$/ && index($2, prefix) == 1 &&
+      ($3 == "0" || $3 == "1") {
+      print $1 "\t" $2 "\t" $3
+    }
+  ' "$TARGETS_FILE"
 }
 
 list_targets() {
   run_with_targets_lock list_targets_locked
 }
 
-list_apps() {
-  for user_id in $(list_user_ids); do
-    cmd package list packages --user "$user_id" 2>/dev/null |
-      sed -n 's/^package://p' |
-      while IFS= read -r package_name; do
-        [ -n "$package_name" ] && printf '%s\t%s\n' "$user_id" "$package_name"
-      done
-  done
-}
-
-add_target_locked() {
-  user_id=$1
-  package_name=$2
-  ensure_initialized_locked || return 1
-  is_installed_for_user "$user_id" "$package_name" || return 3
-
-  if awk -F '\t' -v user="$user_id" -v package="$package_name" \
-    '$1 == user && $2 == package { found = 1 } END { exit found ? 0 : 1 }' "$TARGETS_FILE"; then
-    return 0
-  fi
-
-  temp_file=$TARGETS_FILE.tmp.$$
-  (
-    cat "$TARGETS_FILE"
-    printf '%s\t%s\t0\n' "$user_id" "$package_name"
-  ) > "$temp_file" || return 1
-  chmod 600 "$temp_file" && mv -f "$temp_file" "$TARGETS_FILE"
-}
-
-add_target() {
-  user_id=$1
-  package_name=$2
-  is_valid_user_id "$user_id" && is_valid_package "$package_name" || return 2
-  if [ "$package_name" != "$TARGET_PACKAGE" ]; then
-    echo "WeKit Zygisk currently supports only $TARGET_PACKAGE" >&2
-    return 4
-  fi
-  run_with_targets_lock add_target_locked "$user_id" "$package_name"
+refresh_targets() {
+  run_with_targets_lock refresh_targets_locked
 }
 
 set_enabled_locked() {
@@ -213,7 +242,14 @@ set_enabled_locked() {
     rm -f "$temp_file"
     return "$status"
   fi
-  chmod 600 "$temp_file" && mv -f "$temp_file" "$TARGETS_FILE"
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    return 1
+  }
+  mv -f "$temp_file" "$TARGETS_FILE" || {
+    rm -f "$temp_file"
+    return 1
+  }
 }
 
 set_enabled() {
@@ -221,59 +257,20 @@ set_enabled() {
   package_name=$2
   enabled=$3
   is_valid_user_id "$user_id" && is_valid_package "$package_name" || return 2
-  if [ "$package_name" != "$TARGET_PACKAGE" ]; then
-    echo "WeKit Zygisk currently supports only $TARGET_PACKAGE" >&2
+  if ! is_wechat_package "$package_name"; then
+    echo "WeKit Zygisk supports only packages matching $TARGET_PACKAGE_PREFIX*" >&2
     return 4
   fi
   [ "$enabled" = 0 ] || [ "$enabled" = 1 ] || return 2
   run_with_targets_lock set_enabled_locked "$user_id" "$package_name" "$enabled"
 }
 
-delete_target_locked() {
-  user_id=$1
-  package_name=$2
-  ensure_initialized_locked || return 1
-
-  temp_file=$TARGETS_FILE.tmp.$$
-  awk -F '\t' -v user="$user_id" -v package="$package_name" '
-    $1 == user && $2 == package { found = 1; next }
-    { print }
-    END { exit found ? 0 : 4 }
-  ' "$TARGETS_FILE" > "$temp_file"
-  status=$?
-  if [ "$status" -ne 0 ]; then
-    rm -f "$temp_file"
-    return "$status"
-  fi
-  chmod 600 "$temp_file" && mv -f "$temp_file" "$TARGETS_FILE"
-}
-
-delete_target() {
-  user_id=$1
-  package_name=$2
-  is_valid_user_id "$user_id" && is_valid_package "$package_name" || return 2
-  # Keep legacy non-WeChat rows removable after upgrading from an older module
-  # version, even though they are no longer eligible to be enabled.
-  run_with_targets_lock delete_target_locked "$user_id" "$package_name"
-}
-
-reset_targets_locked() {
-  write_scan_result_locked
-}
-
-reset_targets() {
-  run_with_targets_lock reset_targets_locked
-}
-
 case "$1" in
   list) list_targets ;;
-  apps) list_apps ;;
-  add) add_target "$2" "$3" ;;
+  refresh) refresh_targets ;;
   set) set_enabled "$2" "$3" "$4" ;;
-  delete) delete_target "$2" "$3" ;;
-  reset) reset_targets ;;
   *)
-    echo "Usage: $0 {list|apps|add|set|delete|reset}" >&2
+    echo "Usage: $0 {list|refresh|set}" >&2
     exit 64
     ;;
 esac

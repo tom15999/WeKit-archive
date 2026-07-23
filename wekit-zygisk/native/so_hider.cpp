@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <vector>
 
 #define TAG "WekitSoHider"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
@@ -258,28 +259,28 @@ int so_hide_path(const char* needle) {
 
     // Collect matching entries first (don't modify maps while reading).
     static constexpr int MAX_ENTRIES = 256;
-    MapEntry entries[MAX_ENTRIES];
-    int count = 0;
+    std::vector<MapEntry> entries;
+    entries.reserve(MAX_ENTRIES);
 
     char line[1024];
-    while (fgets(line, sizeof(line), maps) && count < MAX_ENTRIES) {
+    while (fgets(line, sizeof(line), maps) && entries.size() < MAX_ENTRIES) {
         MapEntry e{};
         if (!parse_maps_line(line, &e)) continue;
         if (strstr(e.path, needle) == nullptr) continue;
-        entries[count++] = e;
+        entries.push_back(e);
     }
     fclose(maps);
 
     int remapped = 0;
-    for (int i = 0; i < count; i++) {
+    for (const MapEntry& entry : entries) {
         LOGI("so_hide_path: remapping [0x%zx-0x%zx] %s",
-             (size_t)entries[i].start, (size_t)entries[i].end, entries[i].path);
-        if (remap_segment(&entries[i])) {
+             (size_t)entry.start, (size_t)entry.end, entry.path);
+        if (remap_segment(&entry)) {
             remapped++;
         }
     }
 
-    LOGI("so_hide_path: %d/%d maps and %d linker names hidden for needle '%s'",
-         remapped, count, linker_hidden, needle);
+    LOGI("so_hide_path: %d/%zu maps and %d linker names hidden for needle '%s'",
+         remapped, entries.size(), linker_hidden, needle);
     return remapped;
 }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Color
 import android.view.View
 import android.view.Window
+import androidx.activity.ComponentDialog
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
@@ -31,11 +32,10 @@ fun showComposeDialog(
 ) {
     val context = CommonContextWrapper(context)
 
-    val dialog = Dialog(
+    val dialog = ComponentDialog(
         context,
         android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar_MinWidth
     )
-    val lifecycleOwner = XposedLifecycleOwner.create()
 
     dialog.apply {
         window!!.apply {
@@ -49,8 +49,6 @@ fun showComposeDialog(
 
         setContentView(
             ComposeView(context).apply {
-                setLifecycleOwner(lifecycleOwner)
-
                 setContent {
                     CompositionLocalProvider(LocalContext provides context) {
                         ModuleTheme {
@@ -67,7 +65,6 @@ fun showComposeDialog(
         )
 
         window!!.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
-        setOnDismissListener { lifecycleOwner.onDestroy() }
         show()
     }
 }

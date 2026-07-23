@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <jni.h>
+#include <limits.h>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -22,6 +23,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <vector>
 
 using zygisk::Api;
 using zygisk::AppSpecializeArgs;
@@ -40,6 +42,8 @@ using zygisk::ServerSpecializeArgs;
 static constexpr uint8_t COMPANION_REQUEST_APK = 0x02;
 static constexpr uint16_t MAX_PROCESS_NAME_BYTES = 255;
 static constexpr int APP_USER_RANGE = 100000;
+static constexpr int64_t COMPANION_DISABLED = 0;
+static constexpr int64_t COMPANION_ERROR = -1;
 static constexpr const char* TARGETS_PATH = "/data/adb/wekit/injection-targets.tsv";
 static constexpr const char* WECHAT_PACKAGE = "com.tencent.mm";
 
@@ -73,24 +77,100 @@ static bool send_fd(int sock, int fd) {
     cmsg->cmsg_type  = SCM_RIGHTS;
     cmsg->cmsg_len   = CMSG_LEN(sizeof(int));
     memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
-    return sendmsg(sock, &msg, 0) >= 0;
+    ssize_t rc = -1;
+    do {
+        rc = sendmsg(sock, &msg, MSG_NOSIGNAL);
+    } while (rc < 0 && errno == EINTR);
+    return rc == static_cast<ssize_t>(sizeof(dummy));
 }
 
 static int recv_fd(int sock) {
     char dummy = 0;
     struct iovec iov = { &dummy, 1 };
-    char ctrl_buf[CMSG_SPACE(sizeof(int))] = {};
+    // Leave room to observe and close unexpected extra descriptors instead of
+    // leaking the truncated subset into this process.
+    char ctrl_buf[CMSG_SPACE(sizeof(int) * 4)] = {};
     struct msghdr msg = {};
     msg.msg_iov        = &iov;
     msg.msg_iovlen     = 1;
     msg.msg_control    = ctrl_buf;
     msg.msg_controllen = sizeof(ctrl_buf);
-    ssize_t rc = recvmsg(sock, &msg, 0);
-    if (rc < 0) return -1;
-    struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
-    if (!cmsg || cmsg->cmsg_type != SCM_RIGHTS) return -1;
-    int fd = -1;
-    memcpy(&fd, CMSG_DATA(cmsg), sizeof(int));
+    int recv_flags = 0;
+#ifdef MSG_CMSG_CLOEXEC
+    recv_flags |= MSG_CMSG_CLOEXEC;
+#endif
+    ssize_t rc = -1;
+    do {
+        rc = recvmsg(sock, &msg, recv_flags);
+    } while (rc < 0 && errno == EINTR);
+    if (rc <= 0) return -1;
+
+    bool malformed = rc != static_cast<ssize_t>(sizeof(dummy)) ||
+                     (msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0;
+    std::vector<int> received_fds;
+    received_fds.reserve(4);
+
+    const uintptr_t control_begin = reinterpret_cast<uintptr_t>(msg.msg_control);
+    const uintptr_t control_end = control_begin + msg.msg_controllen;
+    for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg); cmsg != nullptr;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        const uintptr_t header = reinterpret_cast<uintptr_t>(cmsg);
+        if (header < control_begin || header > control_end ||
+            control_end - header < sizeof(struct cmsghdr) ||
+            cmsg->cmsg_len < CMSG_LEN(0) ||
+            cmsg->cmsg_len > control_end - header) {
+            malformed = true;
+            break;
+        }
+        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
+            malformed = true;
+            continue;
+        }
+        if (cmsg->cmsg_len < CMSG_LEN(sizeof(int))) {
+            malformed = true;
+            continue;
+        }
+
+        const size_t data_len = cmsg->cmsg_len - CMSG_LEN(0);
+        if (data_len < sizeof(int) || data_len % sizeof(int) != 0) {
+            malformed = true;
+            continue;
+        }
+        for (size_t offset = 0; offset < data_len; offset += sizeof(int)) {
+            int received = -1;
+            memcpy(&received, CMSG_DATA(cmsg) + offset, sizeof(received));
+            if (received < 0) {
+                malformed = true;
+            } else {
+                received_fds.push_back(received);
+            }
+        }
+    }
+
+    if (received_fds.size() != 1) malformed = true;
+    if (malformed) {
+        for (int received : received_fds) close(received);
+        return -1;
+    }
+
+    const int fd = received_fds.front();
+    // MSG_CMSG_CLOEXEC is not exposed by every supported Android header.
+    // Enforce the flag explicitly as both a compatibility fallback and a
+    // postcondition check on platforms that do support it.
+    int fd_flags = -1;
+    do {
+        fd_flags = fcntl(fd, F_GETFD);
+    } while (fd_flags < 0 && errno == EINTR);
+    int set_result = -1;
+    if (fd_flags >= 0) {
+        do {
+            set_result = fcntl(fd, F_SETFD, fd_flags | FD_CLOEXEC);
+        } while (set_result < 0 && errno == EINTR);
+    }
+    if (fd_flags < 0 || set_result < 0) {
+        close(fd);
+        return -1;
+    }
     return fd;
 }
 
@@ -98,7 +178,10 @@ static bool write_all(int fd, const void* buf, size_t len) {
     const char* p = static_cast<const char*>(buf);
     size_t written = 0;
     while (written < len) {
-        ssize_t r = write(fd, p + written, len - written);
+        ssize_t r = -1;
+        do {
+            r = send(fd, p + written, len - written, MSG_NOSIGNAL);
+        } while (r < 0 && errno == EINTR);
         if (r <= 0) return false;
         written += static_cast<size_t>(r);
     }
@@ -109,11 +192,31 @@ static bool read_all(int fd, void* buf, size_t len) {
     char* p = static_cast<char*>(buf);
     size_t got = 0;
     while (got < len) {
-        ssize_t r = read(fd, p + got, len - got);
+        ssize_t r = -1;
+        do {
+            r = read(fd, p + got, len - got);
+        } while (r < 0 && errno == EINTR);
         if (r <= 0) return false;
         got += static_cast<size_t>(r);
     }
     return true;
+}
+
+// The module always reads this field before it expects an fd. Replying on every
+// parse/open/stat failure distinguishes a deliberate companion rejection from
+// an unexpected EOF in the client log.
+static void send_companion_status(int sock, int64_t status) {
+    if (!write_all(sock, &status, sizeof(status))) {
+        LOGW("companion: failed to send status=%lld", static_cast<long long>(status));
+    }
+}
+
+// Mirrors PackageNames.isWeChat(packageName):
+// packageName.startsWith("com.tencent.mm").
+static bool is_wechat_package(const std::string& package_name) {
+    const size_t prefix_length = strlen(WECHAT_PACKAGE);
+    return package_name.size() >= prefix_length &&
+           package_name.compare(0, prefix_length, WECHAT_PACKAGE) == 0;
 }
 
 static bool is_process_for_package(const std::string& process_name,
@@ -155,15 +258,17 @@ static bool is_enabled_target(jint uid, const std::string& process_name) {
         std::string user_text;
         std::string package_name;
         std::string enabled;
+        std::string unexpected_field;
         if (!std::getline(row, user_text, '\t') ||
             !std::getline(row, package_name, '\t') ||
-            !std::getline(row, enabled, '\t')) {
+            !std::getline(row, enabled, '\t') ||
+            std::getline(row, unexpected_field, '\t')) {
             continue;
         }
 
         int target_user = -1;
         if (!parse_nonnegative_int(user_text, target_user) || target_user != user_id ||
-            package_name != WECHAT_PACKAGE || enabled != "1") {
+            !is_wechat_package(package_name) || enabled != "1") {
             continue;
         }
         if (is_process_for_package(process_name, package_name)) return true;
@@ -181,48 +286,55 @@ static void companion_handler(int sock) {
         !read_all(sock, &process_len, sizeof(process_len)) || process_len == 0 ||
         process_len > MAX_PROCESS_NAME_BYTES) {
         LOGE("companion: invalid request");
+        send_companion_status(sock, COMPANION_ERROR);
         return;
     }
 
     std::string process_name(process_len, '\0');
     if (!read_all(sock, &process_name[0], process_name.size())) {
         LOGE("companion: failed to read process name");
+        send_companion_status(sock, COMPANION_ERROR);
         return;
     }
 
     if (!is_enabled_target(uid, process_name)) {
         // Disabled is a normal result. It is intentionally silent because this
         // handler is reached for every app process Zygisk specializes.
-        const int64_t disabled = 0;
-        write_all(sock, &disabled, sizeof(disabled));
+        send_companion_status(sock, COMPANION_DISABLED);
         return;
     }
 
     const char* abi = current_abi_dir();
     if (!abi) {
         LOGE("companion: unsupported ABI");
-        int64_t err = -1;
-        write_all(sock, &err, sizeof(err));
+        send_companion_status(sock, COMPANION_ERROR);
         return;
     }
+    // Resolve the active module path for every newly specialized process.
+    // A manager that honors MODULE_HOT_INSTALL_REQUEST can therefore promote a
+    // new payload without rebooting; restarting WeChat then obtains this file.
     const std::string apk_path =
         std::string("/data/adb/modules/wekit/payload/wekit-") + abi + ".apk";
     int apk_fd = open(apk_path.c_str(), O_RDONLY | O_CLOEXEC);
     if (apk_fd < 0) {
         LOGE("companion: cannot open %s: %s", apk_path.c_str(), strerror(errno));
-        // BUG-6 fix: send int64_t (same width as the size field the module reads).
-        int64_t err = -1;
-        write_all(sock, &err, sizeof(err));
+        send_companion_status(sock, COMPANION_ERROR);
         return;
     }
 
     struct stat st{};
-    // BUG-7 fix: check fstat return value.
+    // BUG-7 fix: check fstat return value and reject a corrupt empty payload.
     if (fstat(apk_fd, &st) != 0) {
         LOGE("companion: fstat failed: %s", strerror(errno));
         close(apk_fd);
-        int64_t err = -1;
-        write_all(sock, &err, sizeof(err));
+        send_companion_status(sock, COMPANION_ERROR);
+        return;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_size <= 0) {
+        LOGE("companion: invalid payload metadata (mode=%o size=%lld)",
+             static_cast<unsigned int>(st.st_mode), static_cast<long long>(st.st_size));
+        close(apk_fd);
+        send_companion_status(sock, COMPANION_ERROR);
         return;
     }
     int64_t size = static_cast<int64_t>(st.st_size);
@@ -413,13 +525,24 @@ static bool load_dex_from_apk(JNIEnv* env, const std::string& apk_path,
     return true;
 }
 
+static std::string canonicalize_path(const std::string& path) {
+    if (path.empty()) return path;
+    char resolved[PATH_MAX] = {};
+    if (realpath(path.c_str(), resolved) != nullptr) {
+        return resolved;
+    }
+    // A loader may expose an already-unlinked pseudo path. Retain it rather
+    // than manufacturing a different name that would no longer match maps.
+    return path;
+}
+
 // Get the on-disk path of this SO via dladdr.
 static std::string get_self_so_path() {
     Dl_info di{};
     if (dladdr(reinterpret_cast<void*>(&companion_handler), &di) && di.dli_fname) {
-        return di.dli_fname;
+        return canonicalize_path(di.dli_fname);
     }
-    return "/data/adb/modules/wekit/zygisk/" +
+    const std::string fallback = "/data/adb/modules/wekit/zygisk/" +
 #if defined(__aarch64__)
         std::string("arm64-v8a.so");
 #elif defined(__arm__)
@@ -431,6 +554,7 @@ static std::string get_self_so_path() {
 #else
         std::string("arm64-v8a.so");
 #endif
+    return canonicalize_path(fallback);
 }
 
 extern "C" {

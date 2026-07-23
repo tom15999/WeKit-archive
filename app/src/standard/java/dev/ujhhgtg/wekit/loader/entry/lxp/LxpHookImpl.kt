@@ -24,7 +24,6 @@ object LxpHookImpl : IHookBridge, ILoaderService {
 
     override val loaderName: String get() = "libxposed API ${self.apiVersion}"
     override val hookBridgeName: String get() = loaderName
-    override val apiLevel: Int get() = self.apiVersion
     override val frameworkName: String get() = self.frameworkName
     override val frameworkVersion: String get() = self.frameworkVersion
     override val frameworkVersionCode: Long get() = self.frameworkVersionCode

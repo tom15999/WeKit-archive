@@ -50,15 +50,14 @@ import java.util.concurrent.atomic.AtomicLong
  * preserving the static bit is therefore part of the ABI contract.
  */
 @Keep
-internal class ZygiskHookBridge : IHookBridge {
+class ZygiskHookBridge : IHookBridge {
 
     // ── IHookBridge metadata ──────────────────────────────────────────────────
 
-    override val hookBridgeName: String = "WeKit/Zygisk"
-    override val apiLevel: Int = 100
+    override val hookBridgeName: String = "ArtHooker"
     override val frameworkName: String = "Zygisk"
-    override val frameworkVersion: String = "via Magisk/KernelSU"
-    override val frameworkVersionCode: Long = 0L
+    override val frameworkVersion: String = "v1"
+    override val frameworkVersionCode: Long = 1
     override val isDeoptimizationSupported: Boolean = false
 
     private val hookCounterInternal = AtomicLong(0L)
@@ -88,13 +87,26 @@ internal class ZygiskHookBridge : IHookBridge {
             "hookMethod: cannot hook interface member $member"
         }
 
-        val hookId: Long = synchronized(WekitHookBridgeRuntime.hookLock) {
+        // Fast path for an existing native hook. Registration and unhook remain
+        // serialized, but DEX generation for a new hook must not hold this
+        // process-wide lock: DexMaker/loadClass can take tens of milliseconds.
+        val existingHandle = synchronized(WekitHookBridgeRuntime.hookLock) {
+            val existingId = WekitHookBridgeRuntime.getHookId(member)
+                ?: return@synchronized null
+            val registration = WekitHookBridgeRuntime.addCallback(existingId, callback, priority)
+            ZygiskUnhookHandle(member, callback, existingId, registration)
+        }
+        if (existingHandle != null) return existingHandle
+
+        // Another thread may install this member while this runs. Its generated
+        // class then becomes unreachable, and the second locked check below
+        // attaches this callback to the already-installed native hook.
+        val bridge = generateBridgePair(member)
+        val (hookId, registration) = synchronized(WekitHookBridgeRuntime.hookLock) {
             val existingId = WekitHookBridgeRuntime.getHookId(member)
             val id = if (existingId != null) {
                 existingId
             } else {
-                val bridge = generateBridgePair(member)
-
                 val targetArt = nativeGetArtMethod(member)
                 val backupArt = nativeGetArtMethod(bridge.backupMethod)
                 val bridgeArt = nativeGetArtMethod(bridge.bridgeMethod)
@@ -103,29 +115,28 @@ internal class ZygiskHookBridge : IHookBridge {
                 }
 
                 // Register first so dispatch() has an entry before any calls.
-                val id = WekitHookBridgeRuntime.register(member, bridge.backupMethod)
+                val newId = WekitHookBridgeRuntime.register(member, bridge.backupMethod)
 
                 // Write hookId into the generated class's static field.
                 // Must happen before nativeHookMethod installs the entry_point.
-                bridge.setHookId(id)
+                bridge.setHookId(newId)
 
-                val rc = nativeHookMethod(targetArt, backupArt, bridgeArt, id)
+                val rc = nativeHookMethod(targetArt, backupArt, bridgeArt, newId)
                 if (rc != 0) {
-                    WekitHookBridgeRuntime.unregister(id)
+                    WekitHookBridgeRuntime.unregister(newId)
                     error("art_hook_method failed (rc=$rc) for $member")
                 }
 
                 hookCounterInternal.incrementAndGet()
-                id
+                newId
             }
             // Pair callback registration with the native hook lifecycle. A
             // concurrent final unhook must never remove the entry in the gap
             // between installing/looking up a hook and adding this callback.
-            WekitHookBridgeRuntime.addCallback(id, callback, priority)
-            id
+            id to WekitHookBridgeRuntime.addCallback(id, callback, priority)
         }
 
-        return ZygiskUnhookHandle(member, callback, hookId)
+        return ZygiskUnhookHandle(member, callback, hookId, registration)
     }
 
     // ── Deoptimize (unsupported) ──────────────────────────────────────────────
@@ -443,6 +454,7 @@ internal class ZygiskHookBridge : IHookBridge {
         override val member: Member,
         override val callback: IMemberHookCallback,
         private val hookId: Long,
+        private val registration: WekitHookBridgeRuntime.PrioritizedCallback,
     ) : MemberUnhookHandle {
 
         @Volatile private var active = true
@@ -451,21 +463,32 @@ internal class ZygiskHookBridge : IHookBridge {
         override fun unhook() {
             synchronized(WekitHookBridgeRuntime.hookLock) {
                 if (!active) return
-                active = false
-                WekitHookBridgeRuntime.removeCallback(hookId, callback)
+                if (!WekitHookBridgeRuntime.removeCallback(hookId, registration)) {
+                    active = false
+                    return
+                }
                 val entry = WekitHookBridgeRuntime.getEntry(hookId)
-                if (entry == null || entry.callbacks.isNotEmpty()) return
+                if (entry == null || entry.callbacks.isNotEmpty()) {
+                    active = false
+                    return
+                }
 
                 val targetArt = nativeGetArtMethod(member as Executable)
                 val backupArt = nativeGetArtMethod(entry.backupMethod)
                 if (targetArt == 0L || backupArt == 0L ||
                     nativeUnhookMethod(targetArt, backupArt) != 0
                 ) {
-                    Log.e(TAG, "failed to unhook $member; keeping native dispatch entry")
+                    if (!WekitHookBridgeRuntime.restoreCallback(hookId, registration)) {
+                        active = false
+                        Log.e(TAG, "failed to unhook $member; callback restoration also failed")
+                    } else {
+                        Log.e(TAG, "failed to unhook $member; callback restored for retry")
+                    }
                     return
                 }
                 WekitHookBridgeRuntime.retire(hookId)
                 hookCounterInternal.decrementAndGet()
+                active = false
             }
         }
     }

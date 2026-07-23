@@ -2,12 +2,12 @@
 
 package dev.ujhhgtg.wekit.loader.entry.zygisk
 
+import android.annotation.SuppressLint
 import android.util.Log
 import androidx.annotation.Keep
 import dev.ujhhgtg.wekit.BuildConfig
+import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.loader.entry.common.ModuleLoader
-import java.nio.ByteBuffer
-import java.util.zip.ZipFile
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -19,15 +19,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   CallStaticVoidMethod(apkPath, dataDir, zygiskSoPath, targetPackage)
  *
  * The C++ side has already:
- *   1. Copied wekit.apk → <dataDir>/files/wekit/wekit.apk
- *   2. Loaded the module APK through a PathClassLoader and registered the
+ *   1. Copied the companion payload into a sealed process-private memfd.
+ *   2. Loaded that APK through a PathClassLoader and registered the
  *      native methods used by ZygiskHookBridge.
  */
 @Keep
 object ZygiskEntry {
 
     private const val TAG = "ZygiskEntry"
-    private const val WECHAT_PACKAGE = "com.tencent.mm"
     private val entryLock = Any()
     private val moduleStarted = AtomicBoolean(false)
     private var loaderService: ZygiskLoaderService? = null
@@ -35,6 +34,7 @@ object ZygiskEntry {
     private var hostDataDir: String = ""
     private var modulePath: String = ""
 
+    @SuppressLint("PrivateApi", "SoonBlockedPrivateApi")
     @Keep
     @JvmStatic
     fun init(
@@ -43,7 +43,7 @@ object ZygiskEntry {
         zygiskSoPath: String,
         targetPackage: String,
     ) {
-        if (targetPackage != WECHAT_PACKAGE) {
+        if (!PackageNames.isWeChat(targetPackage)) {
             Log.w(TAG, "ignoring unsupported Zygisk target: $targetPackage")
             return
         }
@@ -63,7 +63,7 @@ object ZygiskEntry {
                 loaderService = service
                 hookBridge = bridge
 
-                // FunBox waits for LoadedApk.createAppFactory: its ClassLoader
+                // Waits for LoadedApk.createAppFactory: its ClassLoader
                 // argument is the real host loader, unlike the loader that
                 // loaded this bootstrap DEX.
                 val loadedApk = Class.forName("android.app.LoadedApk")
@@ -125,27 +125,4 @@ object ZygiskEntry {
         }
     }
 
-    /**
-     * Helper used by the C++ loader to build the in-memory DEX payload from the
-     * embedded WeKit APK. Reads all classes*.dex entries and returns them as a
-     * list of ByteBuffers so the native side can construct an InMemoryDexClassLoader.
-     *
-     * Called from C++ as a convenience; the caller may also extract DEX entries
-     * natively using our own zip reader — this path exists for reference.
-     */
-    @Keep
-    @JvmStatic
-    fun extractDexBuffersFromApk(apkPath: String): Array<ByteBuffer> {
-        val result = mutableListOf<ByteBuffer>()
-        ZipFile(apkPath).use { zip ->
-            val entries = zip.entries().asSequence()
-                .filter { it.name.matches(Regex("classes\\d*\\.dex")) }
-                .sortedBy { it.name }
-            for (entry in entries) {
-                val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                result += ByteBuffer.wrap(bytes)
-            }
-        }
-        return result.toTypedArray()
-    }
 }

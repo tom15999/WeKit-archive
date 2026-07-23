@@ -41,8 +41,6 @@ interface IHookBridge {
 
     val hookBridgeName: String
 
-    val apiLevel: Int
-
     val frameworkName: String
 
     val frameworkVersion: String

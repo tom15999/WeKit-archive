@@ -1,6 +1,10 @@
 # shellcheck disable=SC2034
 SKIPUNZIP=1
 
+# Ask root managers that implement the hot-install protocol to activate this
+# update immediately. Managers that do not recognize it ignore the request.
+export MODULE_HOT_INSTALL_REQUEST=true
+
 DEBUG=@DEBUG@
 SONAME=@SONAME@
 SUPPORTED_ABIS="@SUPPORTED_ABIS@"

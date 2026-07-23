@@ -21,40 +21,20 @@
       </header>
 
       <section class="toolbar" aria-label="目标操作">
-        <button class="button button-primary" id="add-target" type="button">添加应用</button>
-        <button class="button button-secondary" id="reset-targets" type="button">重置列表</button>
+        <button class="button button-primary" id="refresh-targets" type="button">刷新列表</button>
       </section>
 
       <section class="targets" aria-labelledby="targets-heading">
         <div class="section-heading">
           <h2 id="targets-heading">应用与 Android 用户</h2>
-          <button class="text-button" id="refresh-targets" type="button">刷新</button>
         </div>
         <div class="loading" id="targets-loading" role="status">正在读取目标...</div>
         <div class="target-list" id="target-list" hidden></div>
         <div class="empty-state" id="empty-state" hidden>
           <h2>没有注入目标</h2>
-          <button class="button button-primary" id="empty-add-target" type="button">添加应用</button>
         </div>
       </section>
     </main>
-
-    <dialog class="app-dialog" id="app-dialog" aria-labelledby="app-dialog-title">
-      <div class="dialog-header">
-        <div>
-          <p class="eyebrow">所有 Android 用户</p>
-          <h2 id="app-dialog-title">添加应用</h2>
-        </div>
-        <button class="icon-button" id="close-dialog" type="button" aria-label="关闭">X</button>
-      </div>
-      <label class="search-field" for="app-search">
-        <span>搜索</span>
-        <input id="app-search" type="search" autocomplete="off" placeholder="应用包名或用户 ID">
-      </label>
-      <div class="loading" id="apps-loading" role="status">正在扫描已安装应用...</div>
-      <div class="app-list" id="app-list" hidden></div>
-      <div class="empty-state compact" id="apps-empty" hidden>没有匹配的应用</div>
-    </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="js/app.js"></script>
