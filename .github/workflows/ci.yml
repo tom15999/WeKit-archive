@@ -141,10 +141,55 @@ jobs:
           name: wekit-mapping
           path: dist/mapping/*.txt
 
-  release-ci:
+  build_zygisk:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ success() && github.ref == 'refs/heads/master' }}
+    if: ${{ needs.build.result == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Zygisk NDK
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          NDK_VERSION="$(jq -er '.ndkVer' wekit-zygisk/project-config.json)"
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}"
+
+      - name: Download Release APK artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: wekit-apk
+          path: artifacts
+
+      - name: Build Zygisk module
+        run: |
+          ./x zygisk build --release --skip-apk-build \
+            --apk artifacts/app-standard-arm64-v8a-release.apk \
+            --apk artifacts/app-standard-armeabi-v7a-release.apk
+
+      - name: Upload Zygisk module
+        uses: actions/upload-artifact@v7
+        with:
+          name: wekit-zygisk
+          path: wekit-zygisk/release/*.zip
+          if-no-files-found: error
+
+  release-ci:
+    needs: [build, build_zygisk]
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.build.result == 'success' && github.ref == 'refs/heads/master' }}
     permissions:
       contents: write
 
@@ -159,6 +204,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: wekit-apk
+          path: artifacts
+
+      - name: Download Zygisk artifact
+        if: ${{ needs.build_zygisk.result == 'success' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: wekit-zygisk
           path: artifacts
 
       - name: Delete existing CI release (if exists)
@@ -184,7 +236,7 @@ jobs:
           echo "Generated update.json:"
           cat artifacts/update.json
 
-      - name: Create CI release and upload APK
+      - name: Create CI release and upload artifacts
         uses: softprops/action-gh-release@v3
         with:
           tag_name: CI
@@ -199,16 +251,15 @@ jobs:
             ${{ github.event.head_commit.message || '手动构建' }}
             ```
           files: |
-            artifacts/*.apk
-            artifacts/update.json
+            artifacts/*
           prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   upload-telegram:
-    needs: build
+    needs: [build, build_zygisk]
     runs-on: ubuntu-latest
-    if: ${{ success() && github.ref == 'refs/heads/master' }}
+    if: ${{ always() && needs.build.result == 'success' && github.ref == 'refs/heads/master' }}
     services:
       telegram-bot-api:
         image: aiogram/telegram-bot-api:latest
@@ -226,6 +277,13 @@ jobs:
           name: wekit-apk
           path: artifacts
 
+      - name: Download Zygisk artifact
+        if: ${{ needs.build_zygisk.result == 'success' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: wekit-zygisk
+          path: artifacts
+
       - name: Wait for Telegram API
         run: |
           until curl -s http://localhost:8081 > /dev/null; do
@@ -233,7 +291,7 @@ jobs:
           sleep 1
           done
 
-      - name: Send APKs via Telegram API
+      - name: Send build artifacts via Telegram API
         env:
           BOT_TOKEN:         ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID:           ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -250,28 +308,32 @@ jobs:
           *提交者* \`${COMMIT_AUTHOR}\`
           [查看详情](https://github.com/${REPO}/commit/${SHA})"
           
-          apks=(artifacts/*.apk)
+          shopt -s nullglob
+          artifacts=(artifacts/*.apk artifacts/*.zip)
           
-          echo $apks
+          echo "${artifacts[@]}"
           
-          if [ ${#apks[@]} -eq 1 ]; then
+          if [ ${#artifacts[@]} -eq 0 ]; then
+            echo "No build artifacts found"
+            exit 1
+          elif [ ${#artifacts[@]} -eq 1 ]; then
             # Single APK — use sendDocument (supports caption)
             curl -s -X POST "http://localhost:8081/bot${BOT_TOKEN}/sendDocument" \
               -F chat_id="${CHAT_ID}" \
-              -F document=@"${apks[0]}" \
+              -F document=@"${artifacts[0]}" \
               -F caption="${caption}" \
               -F parse_mode=Markdown
           else
             media_json="["
             form_args=()
-            for i in "${!apks[@]}"; do
-              apk="${apks[$i]}"
-              name="apk${i}"
-              form_args+=(-F "${name}=@${apk}")
+            for i in "${!artifacts[@]}"; do
+              artifact="${artifacts[$i]}"
+              name="artifact${i}"
+              form_args+=(-F "${name}=@${artifact}")
           
               if [ $i -gt 0 ]; then media_json+=","; fi
           
-              if [ $i -eq $(( ${#apks[@]} - 1 )) ]; then
+              if [ $i -eq $(( ${#artifacts[@]} - 1 )) ]; then
                 media_json+="{\"type\":\"document\",\"media\":\"attach://${name}\",\"caption\":\"${caption}\",\"parse_mode\":\"Markdown\"}"
               else
                 media_json+="{\"type\":\"document\",\"media\":\"attach://${name}\"}"

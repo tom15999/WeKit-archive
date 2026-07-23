@@ -5,6 +5,7 @@
 ```bash
 ./x build           # debug (uses same signing as release)
 ./x build --release # release (with optimization on)
+./x zygisk build    # standard APK splits + arm64/arm32 Zygisk module ZIP
 # (./x is alias to `cargo xtask` which orchestrates the build process)
 ```
 

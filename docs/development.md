@@ -63,6 +63,26 @@ app/build/outputs/apk/standard/release/app-standard-arm64-v8a-release.apk
 app/build/outputs/apk/legacy/release/app-legacy-arm64-v8a-release.apk
 ```
 
+### Zygisk 模块
+
+Zygisk 模块由 `xtask` 统一构建，不再使用独立的 Python 构建脚本。
+
+```bash
+# 构建 standard APK split、arm64/arm32 Zygisk loader 与 debug 安装包
+./x zygisk build
+
+# release 安装包；或仅构建 native loader
+./x zygisk build --release
+./x zygisk native --abi arm64-v8a
+
+# 刷入设备，或者复用最新 ZIP 而不重新构建
+./x zygisk flash --device SERIAL --root ksu --reboot
+./x zygisk flash --skip-build
+```
+
+`zygisk build` 默认构建两种受支持 ABI，并选择 standard flavor 的 split APK
+作为 payload。通过 `--skip-apk-build --apk <path>`（每种 ABI 一次）可复用或显式指定 APK。
+
 ## 4. 安装
 
 ```bash

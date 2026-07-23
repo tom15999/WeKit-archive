@@ -539,11 +539,12 @@ fn install_hooks() -> bool {
 // Flag file
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Path of the on-disk flag that the Java feature writes to request the hooks.
+/// Path of the on-disk flag that enables the native anti-detection hooks.
 ///
-/// Must match `NativeAntiDetection.FLAG_FILE` on the Kotlin side:
-/// `/storage/emulated/0/Android/data/<host-pkg>/WeKit/native_anti_detection_enabled.flag`
-/// where `<host-pkg>` is the WeChat process we are running inside.
+/// In Xposed/LSPosed mode the Java feature `NativeAntiDetection` (removed in
+/// Zygisk mode) wrote this file.  In Zygisk mode the hooks are not used because
+/// Zygisk's own memory maps remap (`so_hider.cpp`) provides equivalent hiding.
+/// The flag path is kept here for reference; no Kotlin class writes it anymore.
 fn flag_file_path() -> Option<std::path::PathBuf> {
     // We are injected into the host (WeChat) process, so its own package name
     // is the current package. Read it from the app data dir the runtime exposes.

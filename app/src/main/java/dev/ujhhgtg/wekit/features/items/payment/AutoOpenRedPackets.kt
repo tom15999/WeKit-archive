@@ -4,20 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Context
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.net.toUri
 import dev.ujhhgtg.reflekt.utils.createInstance
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
@@ -31,11 +18,8 @@ import dev.ujhhgtg.wekit.features.api.core.models.MessageType
 import dev.ujhhgtg.wekit.features.api.net.WeNetSceneApi
 import dev.ujhhgtg.wekit.features.core.ClickableFeature
 import dev.ujhhgtg.wekit.features.core.Feature
-import dev.ujhhgtg.wekit.preferences.WePrefs
 import dev.ujhhgtg.wekit.ui.content.AlertDialogContent
 import dev.ujhhgtg.wekit.ui.content.Button
-import dev.ujhhgtg.wekit.ui.content.ContactsSelector
-import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.WeLogger
@@ -44,7 +28,6 @@ import dev.ujhhgtg.wekit.utils.strings.isGroupChatWxId
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
-import kotlin.random.Random
 
 @SuppressLint("DiscouragedApi")
 @Feature(name = "自动抢红包", categories = ["红包与支付"], description = "监听消息并自动拆开红包")
@@ -90,15 +73,6 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
 
     private val currentRedPacketMap = ConcurrentHashMap<String, RedPacketInfo>()
 
-    private var packetNotif by WePrefs.prefOption("red_packet_notification", false)
-    private var packetSelf by WePrefs.prefOption("red_packet_self", false)
-    private var packetUseWhitelist by WePrefs.prefOption("red_packet_use_whitelist", false)
-    private var packetWhitelist by WePrefs.prefOption("red_packet_whitelist", emptySet())
-    private var packetBlacklist by WePrefs.prefOption("red_packet_blacklist", emptySet())
-    private var packetDelayCustom by WePrefs.prefOption("red_packet_delay_custom", "0")
-    private var packetDelayRandomRange by WePrefs.prefOption("red_packet_delay_random_range", "300")
-    private var packetAutoReply by WePrefs.prefOption("red_packet_auto_reply", "")
-
     private data class RedPacketInfo(
         val sendId: String,
         val nativeUrl: String,
@@ -106,7 +80,9 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
         val msgType: Int,
         val channelId: Int,
         val headImg: String = "",
-        val nickName: String = ""
+        val nickName: String = "",
+        val notificationEnabled: Boolean = false,
+        val autoReply: String = ""
     )
 
     override fun onEnable() {
@@ -168,12 +144,12 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
 
             val displayAmount = amount / 100.0
 
-            val reply = packetAutoReply
+            val reply = info.autoReply
             if (reply.isNotBlank()) {
                 WeMessageApi.sendText(info.talker, reply.replace($$"$amount", "¥$displayAmount"))
             }
 
-            if (!packetNotif) return@hookAfter
+            if (!info.notificationEnabled) return@hookAfter
 
             val displayName = WeDatabaseApi.getDisplayName(info.talker)
             val isGroup = info.talker.isGroupChatWxId
@@ -195,28 +171,22 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
     private fun handleRedPacket(values: ContentValues) {
         try {
             val msgInfo = MessageInfo.fromContentValues(values)
-            if (msgInfo.isSelfSender && !packetSelf) return
-
             val talker = msgInfo.talker
-
-            if (packetUseWhitelist) {
-                if (talker !in packetWhitelist) {
-                    WeLogger.i(TAG, "skipping packet from $talker due to not in whitelist")
-                    return
-                }
-            } else {
-                if (talker in packetBlacklist) {
-                    WeLogger.i(TAG, "skipping packet from $talker due to in blacklist")
-                    return
-                }
-            }
-
             val content = msgInfo.content
             val isGroupChat = msgInfo.isInGroupChat
             val sender = msgInfo.sender
+            val settings = RedPacketSettings.resolve(talker, sender.takeIf { isGroupChat })
 
-            if (isGroupChat && !RedPacketGroupMemberFilter.shouldGrab(talker, sender)) {
-                WeLogger.i(TAG, "skipping packet from $sender in $talker per group member filter")
+            if (!settings.grab.enabled) {
+                WeLogger.i(TAG, "skipping packet from $sender in $talker: grabbing disabled")
+                return
+            }
+            if (msgInfo.isSelfSender && !settings.grabSelf.enabled) {
+                WeLogger.i(TAG, "skipping self-sent packet in $talker")
+                return
+            }
+            if (!settings.isInActiveTime()) {
+                WeLogger.i(TAG, "skipping packet from $sender in $talker: outside active time range")
                 return
             }
 
@@ -236,6 +206,10 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
             val nickName = extractXmlParam(xmlContent, "sendertitle")
 
             if (sendId.isEmpty()) return
+            if (!settings.matchesKeyword(nickName)) {
+                WeLogger.i(TAG, "skipping packet from $sender in $talker: keyword did not match")
+                return
+            }
 
             WeLogger.i(TAG, "detected red packet (sendId=$sendId)")
 
@@ -246,27 +220,13 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
                 msgType = msgType,
                 channelId = channelId,
                 headImg = headImg,
-                nickName = nickName
+                nickName = nickName,
+                notificationEnabled = settings.notification.enabled,
+                autoReply = settings.autoReply.text.takeIf { settings.autoReply.enabled }.orEmpty()
             )
 
-            val customDelay = packetDelayCustom.toLongOrNull() ?: 0L
-            val randomRange = (packetDelayRandomRange.toLongOrNull() ?: 300L).coerceAtLeast(0)
-
-            WeLogger.i(TAG, "config: customDelay=$customDelay, randomRange=$randomRange")
-
-            val delayTime = if (randomRange > 0) {
-                val baseDelay = if (customDelay > 0) customDelay else 1000L
-                val randomOffset = Random.nextLong(-randomRange, randomRange)
-                val finalDelay = (baseDelay + randomOffset).coerceAtLeast(0)
-                WeLogger.i(
-                    TAG,
-                    "random delay mode: baseDelay=$baseDelay, randomOffset=$randomOffset, finalDelay=$finalDelay"
-                )
-                finalDelay
-            } else {
-                WeLogger.i(TAG, "fixed delay mode: finalDelay=$customDelay")
-                customDelay
-            }
+            val delayTime = settings.delayMillis()
+            WeLogger.i(TAG, "resolved delay: ${delayTime}ms (sendId=$sendId)")
 
             thread(name = "ReceiveRedPacketThread") {
                 try {
@@ -310,106 +270,7 @@ object AutoOpenRedPackets : ClickableFeature(), WeDatabaseListenerApi.IInsertLis
     }
 
     override fun onClick(context: ComponentActivity) {
-        showComposeDialog(context) {
-            var notification by remember { mutableStateOf(packetNotif) }
-            var self by remember { mutableStateOf(packetSelf) }
-            var delayInput by remember { mutableStateOf(if (WePrefs.containsKey("red_packet_delay_custom")) packetDelayCustom else "500") }
-            var useWhitelist by remember { mutableStateOf(packetUseWhitelist) }
-            var randomRangeInput by remember { mutableStateOf(packetDelayRandomRange) }
-            var autoReplyInput by remember { mutableStateOf(packetAutoReply) }
-
-            AlertDialogContent(
-                title = { Text("自动抢红包") },
-                text = {
-                    DefaultColumn(Modifier.verticalScroll(rememberScrollState())) {
-                        ListItem(
-                            modifier = Modifier.clickable { useWhitelist = !useWhitelist },
-                            trailingContent = { Switch(checked = useWhitelist, onCheckedChange = { useWhitelist = it }) },
-                            supportingContent = { Text(if (useWhitelist) "仅对选中联系人抢红包" else "对选中联系人跳过抢红包") },
-                            headlineContent = { Text(if (useWhitelist) "黑名单 [> 白名单 <]" else "[> 黑名单 <] 白名单") },
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable {
-                                val regularContacts = WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()
-                                val currentList = if (useWhitelist) packetWhitelist else packetBlacklist
-
-                                showComposeDialog(context) {
-                                    ContactsSelector(
-                                        title = if (useWhitelist) "选择白名单" else "选择黑名单",
-                                        contacts = regularContacts,
-                                        initialSelectedWxIds = currentList,
-                                        onDismiss = onDismiss
-                                    ) { selectedIds ->
-                                        if (useWhitelist) {
-                                            packetWhitelist = selectedIds
-                                        } else {
-                                            packetBlacklist = selectedIds
-                                        }
-                                        showToast("已保存 ${selectedIds.size} 个联系人, 重启微信以使更改生效")
-                                        onDismiss()
-                                    }
-                                }
-                            },
-                            supportingContent = { Text("点击选择联系人") },
-                            headlineContent = { Text(if (useWhitelist) "配置白名单" else "配置黑名单") },
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable {
-                                RedPacketGroupMemberFilter.showManagerDialog(context)
-                            },
-                            supportingContent = { Text("为指定群聊按发送成员设置黑/白名单") },
-                            headlineContent = { Text("群聊指定群成员") },
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable { notification = !notification },
-                            trailingContent = { Switch(checked = notification, onCheckedChange = { notification = it }) },
-                            supportingContent = { Text("使用 Toast 显示抢到的金额") },
-                            headlineContent = { Text("抢到后通知") },
-                        )
-                        ListItem(
-                            modifier = Modifier.clickable { self = !self },
-                            trailingContent = { Switch(checked = self, onCheckedChange = { self = it }) },
-                            supportingContent = { Text("默认情况下不抢自己发出的红包") },
-                            headlineContent = { Text("抢自己的红包") },
-                        )
-                        TextField(
-                            value = delayInput,
-                            onValueChange = { delayInput = it.filter { c -> c.isDigit() }.take(5) },
-                            label = { Text("基础延迟 (毫秒)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                        )
-                        TextField(
-                            value = randomRangeInput,
-                            onValueChange = { randomRangeInput = it.filter { c -> c.isDigit() }.take(5) },
-                            label = { Text("随机偏移范围 (±毫秒)") },
-                            supportingText = { Text("在基础延迟上增加随机偏移, 防止风控, 设 0 固定使用基础延迟") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                        )
-                        TextField(
-                            value = autoReplyInput,
-                            onValueChange = { autoReplyInput = it.trim() },
-                            label = { Text("抢到后自动回复 (留空禁用)") },
-                            supportingText = { Text($$"成功抢到红包后向来源对话发送自定义消息\n(使用占位符 $amount 表示金额)") },
-                            singleLine = true,
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(onClick = {
-                        packetNotif = notification
-                        packetSelf = self
-                        packetDelayCustom = delayInput.ifBlank { "300" }
-                        packetUseWhitelist = useWhitelist
-                        packetDelayRandomRange = randomRangeInput.ifBlank { "300" }
-                        packetAutoReply = autoReplyInput
-                        onDismiss()
-                    }) { Text("确定") }
-                },
-                dismissButton = { TextButton(onDismiss) { Text("取消") } }
-            )
-        }
+        RedPacketSettings.showMainDialog(context)
     }
 
     override fun onBeforeToggle(newState: Boolean, context: Context): Boolean {
