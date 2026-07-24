@@ -57,24 +57,11 @@ static ABI_TABLE: &[AbiSpec] = &[
         env_key: "aarch64_linux_android",
     },
     AbiSpec {
-        android_name: "x86_64",
-        cargo_triple: "x86_64-linux-android",
-        clang_prefix: "x86_64-linux-android",
-        env_key: "x86_64_linux_android",
-    },
-    AbiSpec {
         android_name: "armeabi-v7a",
         cargo_triple: "armv7-linux-androideabi",
         clang_prefix: "armv7a-linux-androideabi",
         // Kept with hyphens to match ConfigureCargoTask.kt's template verbatim.
         env_key: "armv7-linux-androideabi",
-    },
-    AbiSpec {
-        android_name: "x86",
-        cargo_triple: "i686-linux-android",
-        clang_prefix: "i686-linux-android",
-        // Kept with hyphens to match ConfigureCargoTask.kt's template verbatim.
-        env_key: "i686-linux-android",
     },
 ];
 
@@ -83,7 +70,6 @@ static RELEASE_ABIS: &[&str] = &["arm64-v8a", "armeabi-v7a"];
 
 const ZYGISK_MODULE_ID: &str = "wekit";
 const ZYGISK_MODULE_NAME: &str = "WeKit";
-const ZYGISK_VERSION_NAME: &str = "1";
 
 struct ZygiskAbiSpec {
     android_name: &'static str,
@@ -187,7 +173,7 @@ struct ZygiskArgs {
 
 #[derive(Subcommand)]
 enum ZygiskCmd {
-    /// Build the installable Zygisk ZIP. Builds standard APK splits by default.
+    /// Build the installable Zygisk ZIP. Defaults to debug APKs and release Zygisk artifacts.
     Build(ZygiskBuildArgs),
 
     /// Build or reuse a Zygisk ZIP, then install it through a connected device's root manager.
@@ -209,13 +195,34 @@ struct ZygiskConfigArgs {
     #[arg(long = "abi", value_name = "ABI")]
     abis: Vec<String>,
 
-    /// Build with RelWithDebInfo rather than Debug CMake settings.
-    #[arg(long)]
-    release: bool,
+    #[command(flatten)]
+    profile: ZygiskProfileArgs,
 
     /// Android NDK version under ANDROID_HOME/ndk/. Defaults to gradle/libs.versions.toml.
     #[arg(long, value_name = "VERSION")]
     ndk: Option<String>,
+}
+
+#[derive(Args)]
+struct ZygiskProfileArgs {
+    /// Use the Debug Zygisk profile.
+    #[arg(long, conflicts_with = "release")]
+    debug: bool,
+
+    /// Use the RelWithDebInfo Zygisk profile (default).
+    #[arg(long, conflicts_with = "debug")]
+    release: bool,
+}
+
+#[derive(Args)]
+struct ZygiskApkProfileArgs {
+    /// Build or select debug APKs (default).
+    #[arg(long, conflicts_with = "apk_release")]
+    apk_debug: bool,
+
+    /// Build or select release APKs.
+    #[arg(long, conflicts_with = "apk_debug")]
+    apk_release: bool,
 }
 
 #[derive(Args)]
@@ -230,9 +237,11 @@ struct ZygiskNativeArgs {
 
 #[derive(Args)]
 struct ZygiskBuildArgs {
-    /// Package release artifacts instead of debug artifacts.
-    #[arg(long)]
-    release: bool,
+    #[command(flatten)]
+    apk_profile: ZygiskApkProfileArgs,
+
+    #[command(flatten)]
+    zygisk_profile: ZygiskProfileArgs,
 
     /// Delete Zygisk CMake and output directories before building native loaders.
     #[arg(long)]
@@ -246,7 +255,7 @@ struct ZygiskBuildArgs {
     #[arg(long = "apk", value_name = "APK")]
     apks: Vec<PathBuf>,
 
-    /// Reuse existing APK outputs instead of running assembleStandard<BuildType>.
+    /// Reuse APK outputs for the selected APK profile instead of running Gradle.
     #[arg(long)]
     skip_apk_build: bool,
 
@@ -300,7 +309,7 @@ enum ZygiskCleanProfile {
 struct NativeArgs {
     /// Target ABI(s) to build.  May be repeated.  Defaults to arm64-v8a and armeabi-v7a.
     ///
-    /// Valid values: arm64-v8a, armeabi-v7a, x86_64, x86
+    /// Valid values: arm64-v8a, armeabi-v7a
     #[arg(long = "abi", value_name = "ABI")]
     abis: Vec<String>,
 }
@@ -438,17 +447,15 @@ fn resolve_zygisk_abis<'a>(names: &[String]) -> Result<Vec<&'a ZygiskAbiSpec>> {
 
 /// Return `ANDROID_HOME`, falling back to `sdk.dir` in `local.properties`.
 fn find_android_home(workspace_root: &Path) -> Result<String> {
-    if let Ok(home) = env::var("ANDROID_HOME") {
-        if !home.is_empty() {
+    if let Ok(home) = env::var("ANDROID_HOME")
+        && !home.is_empty() {
             return Ok(home);
         }
-    }
 
-    if let Ok(home) = env::var("ANDROID_SDK_ROOT") {
-        if !home.is_empty() {
+    if let Ok(home) = env::var("ANDROID_SDK_ROOT")
+        && !home.is_empty() {
             return Ok(home);
         }
-    }
 
     let props_path = workspace_root.join("local.properties");
     let props = fs::read_to_string(&props_path).with_context(|| {
@@ -666,17 +673,13 @@ fn task_build_native(abi_args: &[String]) -> Result<()> {
 
 // ── Task: zygisk ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ZygiskBuildProfile {
     Debug,
     Release,
 }
 
 impl ZygiskBuildProfile {
-    fn from_release(release: bool) -> Self {
-        if release { Self::Release } else { Self::Debug }
-    }
-
     fn name(self) -> &'static str {
         match self {
             Self::Debug => "debug",
@@ -690,6 +693,30 @@ impl ZygiskBuildProfile {
             Self::Release => "RelWithDebInfo",
         }
     }
+}
+
+impl ZygiskProfileArgs {
+    fn resolve(&self) -> ZygiskBuildProfile {
+        match (self.debug, self.release) {
+            (true, false) => ZygiskBuildProfile::Debug,
+            (false, _) => ZygiskBuildProfile::Release,
+            (true, true) => unreachable!("clap rejects --debug with --release"),
+        }
+    }
+}
+
+impl ZygiskApkProfileArgs {
+    fn resolve(&self) -> ZygiskBuildProfile {
+        match (self.apk_debug, self.apk_release) {
+            (false, true) => ZygiskBuildProfile::Release,
+            (_, false) => ZygiskBuildProfile::Debug,
+            (true, true) => unreachable!("clap rejects --apk-debug with --apk-release"),
+        }
+    }
+}
+
+fn zygisk_version_name(commit_hash: &str, profile: ZygiskBuildProfile) -> String {
+    format!("git+{commit_hash}-{}", profile.name())
 }
 
 #[derive(Deserialize)]
@@ -884,7 +911,7 @@ fn build_zygisk_native(
 
 fn task_zygisk_config(args: &ZygiskConfigArgs) -> Result<()> {
     let root = workspace_root();
-    let profile = ZygiskBuildProfile::from_release(args.release);
+    let profile = args.profile.resolve();
     let abis = resolve_zygisk_abis(&args.abis)?;
     let (ndk_dir, android_platform) = zygisk_ndk_dir(&root, args.ndk.as_deref())?;
     for abi in abis {
@@ -897,7 +924,7 @@ fn task_zygisk_native(args: &ZygiskNativeArgs) -> Result<()> {
     let root = workspace_root();
     build_zygisk_native(
         &root,
-        ZygiskBuildProfile::from_release(args.config.release),
+        args.config.profile.resolve(),
         args.config.ndk.as_deref(),
         &args.config.abis,
         args.force,
@@ -906,15 +933,26 @@ fn task_zygisk_native(args: &ZygiskNativeArgs) -> Result<()> {
 
 fn task_zygisk_build(args: &ZygiskBuildArgs) -> Result<PathBuf> {
     let root = workspace_root();
-    let profile = ZygiskBuildProfile::from_release(args.release);
+    let apk_profile = args.apk_profile.resolve();
+    let zygisk_profile = args.zygisk_profile.resolve();
     if !args.skip_apk_build {
-        let gradle_task = gradle_variant_task("assemble", Some(&Flavor::Standard), args.release);
+        let gradle_task = gradle_variant_task(
+            "assemble",
+            Some(&Flavor::Standard),
+            matches!(apk_profile, ZygiskBuildProfile::Release),
+        );
         println!("zygisk(apk): ./gradlew {gradle_task}");
         run_gradlew(&[&gradle_task], &root)?;
     }
 
-    build_zygisk_native(&root, profile, args.ndk.as_deref(), &[], args.force)?;
-    package_zygisk_module(&root, profile, &args.apks, args.save_symbols)
+    build_zygisk_native(&root, zygisk_profile, args.ndk.as_deref(), &[], args.force)?;
+    package_zygisk_module(
+        &root,
+        zygisk_profile,
+        apk_profile,
+        &args.apks,
+        args.save_symbols,
+    )
 }
 
 fn apk_abis(path: &Path) -> Result<Vec<&'static str>> {
@@ -1239,6 +1277,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 fn package_zygisk_module(
     root: &Path,
     profile: ZygiskBuildProfile,
+    apk_profile: ZygiskBuildProfile,
     explicit_apks: &[PathBuf],
     save_symbols: bool,
 ) -> Result<PathBuf> {
@@ -1250,21 +1289,16 @@ fn package_zygisk_module(
     fs::copy(module_root.join("README.md"), module_dir.join("README.md"))?;
     normalize_crlf(&module_dir)?;
 
-    let commit_count = git_output(root, &["rev-list", "HEAD", "--count"])?;
-    let commit_hash = git_output(root, &["rev-parse", "--verify", "--short", "HEAD"])?;
+    let version_code = git_output(root, &["rev-list", "--count", "HEAD"])?;
+    let commit_hash = git_output(root, &["rev-parse", "--short", "HEAD"])?;
+    let version_name = zygisk_version_name(&commit_hash, profile);
     expand_template(
         &module_dir.join("module.prop"),
         &[
             ("moduleId", ZYGISK_MODULE_ID.to_owned()),
             ("moduleName", ZYGISK_MODULE_NAME.to_owned()),
-            (
-                "versionName",
-                format!(
-                    "{ZYGISK_VERSION_NAME} ({commit_count}-{commit_hash}-{})",
-                    profile.name()
-                ),
-            ),
-            ("versionCode", commit_count.clone()),
+            ("versionName", version_name.clone()),
+            ("versionCode", version_code.clone()),
         ],
     )?;
     let script_variables = [
@@ -1296,7 +1330,7 @@ fn package_zygisk_module(
     )?;
     let payload_dir = module_dir.join("payload");
     fs::create_dir_all(&payload_dir)?;
-    for (abi, source) in resolve_zygisk_payload_apks(root, profile, explicit_apks)? {
+    for (abi, source) in resolve_zygisk_payload_apks(root, apk_profile, explicit_apks)? {
         export_zygisk_payload(&source, &payload_dir, abi)?;
         println!(
             "zygisk(package): embedded {} -> payload/{abi}/wekit.apk (DEX extracted during installation)",
@@ -1304,10 +1338,7 @@ fn package_zygisk_module(
         );
     }
 
-    let build_name = format!(
-        "{ZYGISK_MODULE_NAME}-{ZYGISK_VERSION_NAME}-{commit_count}-{commit_hash}-{}",
-        profile.name()
-    );
+    let build_name = format!("{ZYGISK_MODULE_NAME}-{version_code}-{version_name}");
     let release_dir = module_root.join("release");
     fs::create_dir_all(&release_dir)?;
     let zip_path = release_dir.join(format!("{build_name}.zip"));
@@ -1435,7 +1466,7 @@ fn install_zygisk_zip(
 
 fn task_zygisk_flash(args: &ZygiskFlashArgs) -> Result<()> {
     let root = workspace_root();
-    let profile = ZygiskBuildProfile::from_release(args.build.release);
+    let profile = args.build.zygisk_profile.resolve();
     let zip_path = if args.skip_build {
         latest_zygisk_zip(&root, profile)?
     } else {
@@ -1556,6 +1587,75 @@ mod tests {
     use super::*;
 
     const VERSION_CATALOG_PATH: &str = "gradle/libs.versions.toml";
+
+    fn parse_zygisk_build_args(extra: &[&str]) -> ZygiskBuildArgs {
+        let mut argv = vec!["xtask", "zygisk", "build"];
+        argv.extend_from_slice(extra);
+        match Cli::try_parse_from(argv).unwrap().command {
+            Cmd::Zygisk(ZygiskArgs {
+                command: ZygiskCmd::Build(args),
+            }) => args,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn zygisk_build_defaults_to_debug_apk_and_release_zygisk() {
+        let args = parse_zygisk_build_args(&[]);
+
+        assert_eq!(args.apk_profile.resolve(), ZygiskBuildProfile::Debug);
+        assert_eq!(args.zygisk_profile.resolve(), ZygiskBuildProfile::Release);
+    }
+
+    #[test]
+    fn zygisk_build_profiles_can_be_overridden_independently() {
+        let args = parse_zygisk_build_args(&["--apk-release", "--debug"]);
+        assert_eq!(args.apk_profile.resolve(), ZygiskBuildProfile::Release);
+        assert_eq!(args.zygisk_profile.resolve(), ZygiskBuildProfile::Debug);
+
+        let args = parse_zygisk_build_args(&["--apk-debug", "--release"]);
+        assert_eq!(args.apk_profile.resolve(), ZygiskBuildProfile::Debug);
+        assert_eq!(args.zygisk_profile.resolve(), ZygiskBuildProfile::Release);
+    }
+
+    #[test]
+    fn zygisk_build_rejects_conflicting_profile_flags() {
+        assert!(Cli::try_parse_from(["xtask", "zygisk", "build", "--debug", "--release"]).is_err());
+        assert!(
+            Cli::try_parse_from(["xtask", "zygisk", "build", "--apk-debug", "--apk-release",])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn zygisk_native_defaults_to_release_and_accepts_debug_override() {
+        for (extra, expected) in [
+            (&[][..], ZygiskBuildProfile::Release),
+            (&["--debug"][..], ZygiskBuildProfile::Debug),
+        ] {
+            let mut argv = vec!["xtask", "zygisk", "native"];
+            argv.extend_from_slice(extra);
+            let profile = match Cli::try_parse_from(argv).unwrap().command {
+                Cmd::Zygisk(ZygiskArgs {
+                    command: ZygiskCmd::Native(args),
+                }) => args.config.profile.resolve(),
+                _ => unreachable!(),
+            };
+            assert_eq!(profile, expected);
+        }
+    }
+
+    #[test]
+    fn formats_zygisk_version_names_like_gradle_with_profile_suffix() {
+        assert_eq!(
+            zygisk_version_name("8920253", ZygiskBuildProfile::Debug),
+            "git+8920253-debug"
+        );
+        assert_eq!(
+            zygisk_version_name("8920253", ZygiskBuildProfile::Release),
+            "git+8920253-release"
+        );
+    }
 
     #[test]
     fn parses_zygisk_values_from_gradle_version_catalog() {

@@ -5,12 +5,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.constants.PackageNames
+import dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskLoaderService
+import dev.ujhhgtg.wekit.loader.startup.StartupInfo
 import dev.ujhhgtg.wekit.utils.android.getSystemService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -53,11 +56,10 @@ private val FLAVOR = BuildConfig.FLAVOR_SLUG
 private val ABI_APK_MAP = mapOf(
     "arm64-v8a" to "$BASE_URL/app-$FLAVOR-arm64-v8a-release.apk",
     "armeabi-v7a" to "$BASE_URL/app-$FLAVOR-armeabi-v7a-release.apk",
-    "x86" to "$BASE_URL/app-$FLAVOR-x86-release.apk",
-    "x86_64" to "$BASE_URL/app-$FLAVOR-x86_64-release.apk",
 )
-private val UNIVERSAL_APK = "$BASE_URL/app-$FLAVOR-universal-release.apk"
 private const val UPDATE_JSON_URL = "$BASE_URL/update.json"
+private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+private const val ZIP_MIME_TYPE = "application/zip"
 
 /** Returns the best APK URL for this device. */
 private fun apkUrlForDevice(): String {
@@ -65,8 +67,12 @@ private fun apkUrlForDevice(): String {
     for (abi in supportedAbis) {
         ABI_APK_MAP[abi]?.let { return it }
     }
-    return UNIVERSAL_APK
+    error("Unsupported Android ABI: ${supportedAbis.joinToString()}")
 }
+
+/** Matches the release name emitted by the Zygisk packager. */
+private fun zygiskModuleFileName(info: UpdateInfo): String =
+    "WeKit-${info.versionCode}-${info.versionName}-release.zip"
 
 // ─── AppUpdater ───────────────────────────────────────────────────────────────
 
@@ -75,7 +81,7 @@ private fun apkUrlForDevice(): String {
  *
  * Usage:
  * ```
- * when (val result = AppUpdater.checkForUpdate(context)) {
+ * when (val result = AppUpdater.checkForUpdate()) {
  *     is UpdateResult.UpdateAvailable -> AppUpdater.downloadAndInstall(context, result.info)
  *     is UpdateResult.UpToDate        -> { /* nothing to do */ }
  *     is UpdateResult.Error           -> { /* show error */ }
@@ -118,8 +124,9 @@ object AppUpdater {
     }
 
     /**
-     * Enqueues an APK download via [DownloadManager] and, on completion,
-     * triggers the system installer.
+     * Downloads the update matching the active loader. Zygisk mode downloads
+     * the module ZIP and opens it with a compatible root manager; other modes
+     * download the APK and open the system package installer.
      *
      * Requires the `REQUEST_INSTALL_PACKAGES` permission and a FileProvider
      * authority of `<packageName>.provider` in your manifest.
@@ -128,13 +135,37 @@ object AppUpdater {
      * [BroadcastReceiver] on [Dispatchers.Main].
      */
     suspend fun downloadAndInstall(context: Context, info: UpdateInfo) {
-        val apkUrl = apkUrlForDevice()
-        val fileName = "wekit-${info.versionName}.apk"
+        val isZygisk = StartupInfo.loaderService is ZygiskLoaderService
+        val fileName: String
+        val downloadUrl: String
+        val mimeType: String
+        if (isZygisk) {
+            fileName = zygiskModuleFileName(info)
+            downloadUrl = "$BASE_URL/$fileName"
+            mimeType = ZIP_MIME_TYPE
+        } else {
+            fileName = "wekit-${info.versionName}.apk"
+            downloadUrl = apkUrlForDevice()
+            mimeType = APK_MIME_TYPE
+        }
 
-        val downloadId = enqueueDownload(context, apkUrl, fileName)
-        val apkFile = waitForDownload(context, downloadId)
+        val downloadId = enqueueDownload(context, downloadUrl, fileName, mimeType)
+        val downloadedFile = waitForDownload(context, downloadId)
+        val contentUri = getDownloadedFileUri(context, downloadedFile)
 
-        install(context, apkFile)
+        if (isZygisk) {
+            launchKsuWithModule(context, contentUri)
+        } else {
+            installApk(context, contentUri)
+        }
+    }
+
+    fun launchKsuWithModule(context: Context, zipUri: Uri) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(zipUri, ZIP_MIME_TYPE)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -150,13 +181,18 @@ object AppUpdater {
         }
     }
 
-    private fun enqueueDownload(context: Context, url: String, fileName: String): Long {
+    private fun enqueueDownload(
+        context: Context,
+        url: String,
+        fileName: String,
+        mimeType: String,
+    ): Long {
         val request = DownloadManager.Request(url.toUri()).apply {
             setTitle("WeKit 更新")
             setDescription("正在下载更新...")
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-            setMimeType("application/vnd.android.package-archive")
+            setMimeType(mimeType)
         }
         val dm = context.getSystemService<DownloadManager>()
         return dm.enqueue(request)
@@ -218,7 +254,7 @@ object AppUpdater {
             }
         }
 
-    private fun install(context: Context, apk: File) {
+    private fun getDownloadedFileUri(context: Context, file: File): Uri {
         /*
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -232,15 +268,16 @@ object AppUpdater {
         </provider>
          */
 
-        val uri =
-            FileProvider.getUriForFile(
-                context,
-                "${PackageNames.WECHAT}.external.recovery.logprovider",
-                apk,
-            )
+        return FileProvider.getUriForFile(
+            context,
+            "${PackageNames.WECHAT}.external.recovery.logprovider",
+            file,
+        )
+    }
 
+    private fun installApk(context: Context, apkUri: Uri) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
+            setDataAndType(apkUri, APK_MIME_TYPE)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
         context.startActivity(intent)

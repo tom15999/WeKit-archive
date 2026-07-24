@@ -346,11 +346,10 @@ impl YuvFrame {
         alpha: Option<&YuvFrame>,
         remove_rounded_canvas_mask: bool,
     ) -> Result<Vec<u8>, String> {
-        if let Some(alpha) = alpha {
-            if alpha.width != self.width || alpha.height != self.height {
+        if let Some(alpha) = alpha
+            && (alpha.width != self.width || alpha.height != self.height) {
                 return Err("VP9 color and alpha frames have different dimensions".to_string());
             }
-        }
         let mut alpha_values = alpha.map(|frame| {
             frame
                 .y
@@ -358,11 +357,10 @@ impl YuvFrame {
                 .map(|value| alpha_luma(*value, frame.full_range))
                 .collect::<Vec<_>>()
         });
-        if remove_rounded_canvas_mask {
-            if let Some(values) = &mut alpha_values {
+        if remove_rounded_canvas_mask
+            && let Some(values) = &mut alpha_values {
                 remove_rounded_canvas_alpha(values, self.width, self.height);
             }
-        }
         let mut pixels = vec![0_u8; self.width * self.height * 4];
         for row in 0..self.height {
             for column in 0..self.width {

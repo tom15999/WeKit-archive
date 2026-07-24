@@ -26,5 +26,6 @@ export function exec(command, options = {}) {
 }
 
 export function toast(message) {
-  if (typeof globalThis.ksu?.toast === "function") globalThis.ksu.toast(message);
+  if (typeof globalThis.ksu?.toast === "function")
+    globalThis.ksu.toast(message);
 }

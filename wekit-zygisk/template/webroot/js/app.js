@@ -1,14 +1,11 @@
-import {
-  exec,
-  hasKernelSuBridge,
-  shellQuote,
-} from "./bridge.js";
+import { exec, hasKernelSuBridge, shellQuote } from "./bridge.js";
 
 const $ = (selector) => document.querySelector(selector);
 const targetList = $("#target-list");
 const targetLoading = $("#targets-loading");
 const emptyState = $("#empty-state");
 const enabledCount = $("#enabled-count");
+const exportLogcatButton = $("#export-logcat");
 const refreshTargetsButton = $("#refresh-targets");
 const diagnostics = $("#diagnostics");
 const deviceLog = $("#device-log");
@@ -194,7 +191,9 @@ async function loadDeviceLog() {
     const sections = [];
     if (lastCommandFailure)
       sections.push(`=== 最近一次 WebUI 命令 ===\n${lastCommandFailure}`);
-    sections.push(`=== 设备日志 ===\n${output || `<empty; exit ${exitCode}>`}`);
+    sections.push(
+      `=== WebUI 日志 ===\n${output || `<empty; exit ${exitCode}>`}`,
+    );
     deviceLog.textContent = sections.join("\n\n");
     console.info("[WeKit WebUI] device log result", {
       commandLine,
@@ -205,7 +204,7 @@ async function loadDeviceLog() {
   } catch (error) {
     deviceLog.textContent = [
       lastCommandFailure,
-      `无法读取设备日志: ${error?.stack || error}`,
+      `无法读取 WebUI 日志: ${error?.stack || error}`,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -218,7 +217,7 @@ async function loadDeviceLog() {
 
 async function showCommandFailure(error, fallback) {
   const message = error?.message || fallback;
-  showToast(`${message}，详见运行日志`, true);
+  showToast(`${message}，详见 WebUI 日志`, true);
   console.error("[WeKit WebUI] operation failed", error);
   diagnostics.open = true;
   await loadDeviceLog();
@@ -337,6 +336,29 @@ async function refreshTargets() {
   }
 }
 
+async function exportLogcat() {
+  exportLogcatButton.disabled = true;
+  try {
+    await configCommand("export-log");
+    showToast("已导出当前启动日志");
+  } catch (error) {
+    await showCommandFailure(error, "导出日志失败");
+  } finally {
+    exportLogcatButton.disabled = false;
+  }
+}
+
+async function initializeWebUi() {
+  try {
+    await configCommand("check-logcat");
+  } catch (error) {
+    console.error("[WeKit WebUI] cannot check logcat size", error);
+    showToast("无法检查导出日志大小", true);
+  }
+  await refreshTargets();
+}
+
+exportLogcatButton.addEventListener("click", exportLogcat);
 refreshTargetsButton.addEventListener("click", refreshTargets);
 refreshLogButton.addEventListener("click", loadDeviceLog);
 diagnostics.addEventListener("toggle", () => {
@@ -345,7 +367,8 @@ diagnostics.addEventListener("toggle", () => {
 
 if (!hasKernelSuBridge()) {
   targetLoading.textContent = "请在 KernelSU 管理器中打开此页面";
+  exportLogcatButton.disabled = true;
   refreshTargetsButton.disabled = true;
 } else {
-  refreshTargets();
+  void initializeWebUi();
 }

@@ -40,7 +40,7 @@ extern "C"
      */
     bool art_unhook_method(JNIEnv *env, uintptr_t target_art, uintptr_t backup_art);
 
-    /** Mark one dalvik.system.DexFile as trusted, matching FunBox _setDexFileTrusted. */
+    /** Mark one dalvik.system.DexFile as trusted through ART's setTrusted native. */
     bool art_trust_dex_file(JNIEnv *env, jobject dex_file);
 
     /** Mark every DexFile backing a BaseDexClassLoader as trusted. */

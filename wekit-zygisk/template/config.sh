@@ -7,7 +7,9 @@ STATE_DIR=/data/adb/wekit
 TARGETS_FILE=$STATE_DIR/injection-targets.tsv
 LOCK_DIR=$STATE_DIR/.injection-targets.lock
 LOG_FILE=$STATE_DIR/webui.log
+LOGCAT_FILE=$STATE_DIR/logcat.log
 LOG_MAX_BYTES=131072
+LOGCAT_MAX_BYTES=1048576
 LOCK_RETRIES=10
 # Keep this in lockstep with PackageNames.isWeChat(packageName):
 # packageName.startsWith("com.tencent.mm").
@@ -460,14 +462,86 @@ read_log() {
   fi
 }
 
+clear_logcat_if_oversized_locked() {
+  ensure_state_dir || return 1
+  [ -f "$LOGCAT_FILE" ] || return 0
+  logcat_size=$(wc -c < "$LOGCAT_FILE" 2>/dev/null)
+  case "$logcat_size" in
+    ''|*[!0-9]*)
+      report_error "cannot determine logcat file size: $LOGCAT_FILE"
+      return 1
+      ;;
+  esac
+  [ "$logcat_size" -le "$LOGCAT_MAX_BYTES" ] && return 0
+
+  temp_file=$LOGCAT_FILE.tmp.$$
+  rm -f "$temp_file"
+  : > "$temp_file" || {
+    report_error "cannot create empty logcat file: $temp_file"
+    return 1
+  }
+  chmod 600 "$temp_file" || {
+    report_error "cannot set logcat file mode: $temp_file"
+    rm -f "$temp_file"
+    return 1
+  }
+  mv -f "$temp_file" "$LOGCAT_FILE" || {
+    report_error "cannot clear oversized logcat file: $LOGCAT_FILE"
+    rm -f "$temp_file"
+    return 1
+  }
+  log_event INFO "logcat cleared size=$logcat_size limit=$LOGCAT_MAX_BYTES file=$LOGCAT_FILE"
+}
+
+clear_logcat_if_oversized() {
+  run_with_targets_lock clear_logcat_if_oversized_locked
+}
+
+export_logcat_locked() {
+  ensure_state_dir || return 1
+  temp_file=$LOGCAT_FILE.tmp.$$
+  rm -f "$temp_file"
+  # KernelSU WebUI shells may inherit ANDROID_LOG_TAGS. Supply an explicit
+  # verbose filter so every buffer includes WeKit's app-process tags.
+  ANDROID_LOG_TAGS='*:V' /system/bin/logcat -d -b all -v threadtime '*:V' > "$temp_file"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$temp_file"
+    report_error "cannot export logcat status=$status command=/system/bin/logcat -d -b all -v threadtime '*:V'"
+    return "$status"
+  fi
+  chmod 600 "$temp_file" || {
+    report_error "cannot set logcat file mode: $temp_file"
+    rm -f "$temp_file"
+    return 1
+  }
+  mv -f "$temp_file" "$LOGCAT_FILE" || {
+    report_error "cannot publish logcat file: $LOGCAT_FILE"
+    rm -f "$temp_file"
+    return 1
+  }
+  logcat_size=$(wc -c < "$LOGCAT_FILE" 2>/dev/null)
+  case "$logcat_size" in
+    ''|*[!0-9]*) logcat_size=0 ;;
+  esac
+  log_event INFO "logcat export published bytes=$logcat_size file=$LOGCAT_FILE"
+  printf 'Exported current-boot logcat to %s (%s bytes)\n' "$LOGCAT_FILE" "$logcat_size"
+}
+
+export_logcat() {
+  run_with_targets_lock export_logcat_locked
+}
+
 case "$1" in
   list) run_logged_command list list_targets ;;
   refresh) run_logged_command refresh refresh_targets ;;
   replace-stdin) run_logged_command replace replace_targets_from_stdin ;;
   set) run_logged_command "set user=$2 package=$3 enabled=$4" set_enabled "$2" "$3" "$4" ;;
+  export-log) run_logged_command export-log export_logcat ;;
+  check-logcat) clear_logcat_if_oversized ;;
   log) read_log ;;
   *)
-    echo "Usage: $0 {list|refresh|set|log}" >&2
+    echo "Usage: $0 {list|refresh|set|export-log|check-logcat|log}" >&2
     exit 64
     ;;
 esac

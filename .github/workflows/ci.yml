@@ -60,7 +60,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: aarch64-linux-android,x86_64-linux-android,armv7-linux-androideabi,i686-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -77,10 +77,6 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
-
-      - name: Install system dependencies
-        run: |
-          sudo apt install -y gcc-multilib
 
       - name: Build native library
         run: |
@@ -167,7 +163,7 @@ jobs:
 
       - name: Build Zygisk module
         run: |
-          ./x zygisk build --release --skip-apk-build \
+          ./x zygisk build --apk-release --release --skip-apk-build \
             --apk artifacts/app-standard-arm64-v8a-release.apk \
             --apk artifacts/app-standard-armeabi-v7a-release.apk
 

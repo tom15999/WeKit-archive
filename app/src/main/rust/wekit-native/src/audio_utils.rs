@@ -428,7 +428,7 @@ fn is_silk_header(path: &str) -> Result<bool> {
     if n >= SILK_MAGIC.len() && &header[..SILK_MAGIC.len()] == SILK_MAGIC {
         return Ok(true);
     }
-    if n >= 1 + SILK_MAGIC.len()
+    if n > SILK_MAGIC.len()
         && header[0] == 0x02
         && &header[1..1 + SILK_MAGIC.len()] == SILK_MAGIC
     {

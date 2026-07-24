@@ -127,8 +127,6 @@ fn configure_android_libvpx(source: &Path, build: &Path) {
     let vpx_target = match rust_target.as_str() {
         "aarch64-linux-android" => "arm64-android-gcc",
         "armv7-linux-androideabi" => "armv7-android-gcc",
-        "x86_64-linux-android" => "x86_64-android-gcc",
-        "i686-linux-android" => "x86-android-gcc",
         other => panic!("unsupported Android target for libvpx: {other}"),
     };
     let cc = target_tool("CC", &rust_target);
@@ -175,7 +173,7 @@ fn target_tool(prefix: &str, target: &str) -> PathBuf {
     ];
     candidates
         .iter()
-        .find_map(|key| env::var_os(key))
+        .find_map(env::var_os)
         .map(PathBuf::from)
         .unwrap_or_else(|| panic!("{prefix} is not configured for {target}"))
 }

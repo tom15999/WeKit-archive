@@ -37,10 +37,8 @@ pub fn trigger_test_crash(crash_type: i32) {
         }
         3 => {
             logi!("Triggering SIGILL (illegal instruction)…");
+            #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
             unsafe {
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                core::arch::asm!("ud2");
-                #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
                 core::arch::asm!("udf #0");
             }
         }

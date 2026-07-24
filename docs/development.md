@@ -4,94 +4,285 @@
 
 ```bash
 git clone https://github.com/Ujhhgtg/WeKit.git --recursive
+cd WeKit
 ```
 
-## 2. 安装系统依赖
+## 2. 环境要求
 
-### A. Arch Linux
+当前项目使用:
+
+| 依赖 | 版本或要求 |
+|------|------------|
+| JDK | 21 |
+| Android SDK | compile SDK 37, target SDK 37 |
+| Android NDK | `30.0.14904198` |
+| Rust | 支持 Rust 2024 edition 的 stable 工具链 |
+| CMake | >= 3.22.1, 构建 Zygisk loader 时需要 |
+| Ninja | 构建 Zygisk loader 时需要 |
+| adb | 安装 APK 或刷入 Zygisk ZIP 时需要 |
+
+### Arch Linux
 
 ```bash
-# 确保已在 /etc/pacman.conf 中启用 multilib 软件源
-yay -Syu lib32-glibc rustup
+yay -Syu jdk21-openjdk rustup cmake ninja
 rustup toolchain install stable
 rustup default stable
-rustup target add x86_64-linux-android aarch64-linux-android armv7-linux-androideabi i686-linux-android
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;$(grep '^ndk' ./gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')"
+rustup target add aarch64-linux-android armv7-linux-androideabi
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)"
 ```
 
-### B. Debian 系
+### Debian 系
+
+JDK 21 和 `rustup` 的包名可能随发行版而异。安装 JDK 21 后, 还需要 CMake、Ninja
+和 Rust Android targets:
 
 ```bash
-sudo apt update -y && sudo apt full-upgrade -y
-sudo apt install gcc-multilib rustup
+sudo apt update
+sudo apt install cmake ninja-build rustup
 rustup toolchain install stable
 rustup default stable
-rustup target add x86_64-linux-android aarch64-linux-android armv7-linux-androideabi i686-linux-android
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;$(grep '^ndk' ./gradle/libs.versions.toml | sed 's/.*= "\(.*\)"/\1/')"
+rustup target add aarch64-linux-android armv7-linux-androideabi
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$(sed -n 's/^ndk = "\(.*\)"/\1/p' gradle/libs.versions.toml)"
 ```
 
-### C. Windows
+### Windows
 
 建议全文背诵 [停止用 Windows 工作!](https://zhuanlan.fxzhihu.com/p/2024527609388627701)
 
-## 3. 构建
+### Android SDK 路径
 
-构建期间会自动编译 Rust 原生库, 无须手动编译
+`./x` 按以下顺序查找 Android SDK:
 
-### 变体 (Flavor)
+1. `ANDROID_HOME`
+2. `ANDROID_SDK_ROOT`
+3. 仓库根目录 `local.properties` 中的 `sdk.dir`
 
-模块提供两个入口点变体, 通过 `entrypoint` flavor 维度区分:
+## 3. `./x`
 
-- **standard**: 包含现代 libxposed api 入口点 (`entry/lxp/*` 与 `META-INF/xposed/*`), 框架会优先使用 libxposed 加载. 大多数用户应使用此变体.
-- **legacy**: 移除了 libxposed 入口点与相关元数据, 使框架自动回退到传统 de.robv xposed api (`Xp51HookEntry` + `assets/xposed_init`). 供设备或框架对 libxposed 兼容性差的用户使用.
+仓库根目录的 `./x` 等价于 `cargo xtask`, 以下文档统一使用 `./x`:
 
-两个变体共用同一份 `applicationId` 与除入口点外的所有代码资源, 由 Gradle 的 flavor source set 机制自动分离, 无须手动删除文件.
-
-```bash
-# 单独构建某个变体
-cargo xtask build --release --flavor standard
-cargo xtask build --release --flavor legacy
-
-# 一次性构建全部变体 (standard/legacy × debug/release)
-cargo xtask build --release
+```sh
+#!/usr/bin/env sh
+exec cargo xtask "$@"
 ```
 
-产物按 `变体/构建类型` 分目录输出:
+可用的一级命令:
+
+| 命令 | 用途 |
+|------|------|
+| `./x configure` | 生成 Rust Android linker 配置 |
+| `./x build` | 构建 APK, 或仅构建 Rust native 库 |
+| `./x run` | 通过 Gradle 安装 APK |
+| `./x check` | 对 Rust native 库执行 `cargo check` |
+| `./x clippy` | 对 Rust native 库执行 `cargo clippy -- -D warnings` |
+| `./x zygisk` | 配置、构建、打包、安装或清理 Zygisk 模块 |
+
+使用 `./x --help` 或 `./x <命令> --help` 查看当前支持的参数。
+
+### Rust Android 配置
+
+```bash
+./x configure
+```
+
+该命令从已安装的 NDK 中选择版本号最高且主版本 >= 29 的版本, 为两种 ARM ABI
+生成:
 
 ```none
-app/build/outputs/apk/standard/release/app-standard-arm64-v8a-release.apk
-app/build/outputs/apk/legacy/release/app-legacy-arm64-v8a-release.apk
+app/src/main/rust/wekit-native/.cargo/config.toml
 ```
 
-### Zygisk 模块
+完整 APK 模式的 `./x build` 和 `./x run` 会自动执行该步骤。直接运行
+`./x build --native-only`、`./x check` 或 `./x clippy` 前, 应先执行一次
+`./x configure`。
 
-Zygisk 模块由 `xtask` 统一构建，不再使用独立的 Python 构建脚本。
+## 4. APK
+
+### 变体
+
+模块通过 `entrypoint` flavor 提供两个变体:
+
+- **standard**: 包含现代 libxposed API 入口
+  (`entry/lxp/*` 与 `META-INF/xposed/*`)。大多数用户应使用此变体。
+- **legacy**: 不包含 libxposed 入口和相关元数据, 使框架回退到传统
+  `de.robv.android.xposed` API (`Xp51HookEntry` 与 `assets/xposed_init`)。
+
+两个变体使用同一个 `applicationId`, 不能同时安装。
+
+### 构建
 
 ```bash
-# 构建 standard APK split、arm64/arm32 Zygisk loader 与 debug 安装包
-./x zygisk build
+# 两个 flavor 的 debug APK
+./x build
 
-# release 安装包；或仅构建 native loader
-./x zygisk build --release
-./x zygisk native --abi arm64-v8a
+# 两个 flavor 的 release APK
+./x build --release
 
-# 刷入设备，或者复用最新 ZIP 而不重新构建
-./x zygisk flash --device SERIAL --root ksu --reboot
-./x zygisk flash --skip-build
+# 只构建一个 flavor
+./x build --flavor standard
+./x build --flavor legacy --release
+
+# 只构建 Rust native 库, 跳过 Gradle
+./x configure
+./x build --native-only
+./x build --native-only --abi arm64-v8a
 ```
 
-`zygisk build` 默认构建两种受支持 ABI，并选择 standard flavor 的 split APK
-作为 payload。通过 `--skip-apk-build --apk <path>`（每种 ABI 一次）可复用或显式指定 APK。
+完整 APK 构建依次执行:
 
-## 4. 安装
+1. `./x configure`
+2. 为所选 ABI 编译 release 模式的 `libwekit_native.so`
+3. 将 native 库复制到 `app/src/main/jniLibs/<abi>/`
+4. 执行对应的 Gradle `assemble` 任务
+
+`--abi` 可以重复指定。Rust native 支持 `arm64-v8a` 和 `armeabi-v7a`。
+`--native-only` 会忽略 `--flavor` 和 `--release`, native 库始终使用 Cargo release
+profile。
+
+Gradle 当前只输出 ARM64 和 ARM32 APK split:
+
+```none
+app/build/outputs/apk/standard/debug/app-standard-arm64-v8a-debug.apk
+app/build/outputs/apk/standard/debug/app-standard-armeabi-v7a-debug.apk
+app/build/outputs/apk/legacy/debug/app-legacy-arm64-v8a-debug.apk
+app/build/outputs/apk/legacy/debug/app-legacy-armeabi-v7a-debug.apk
+```
+
+release 产物位于对应的 `standard/release/` 和 `legacy/release/` 目录。
+
+### 安装
+
+连接 adb 设备后执行:
 
 ```bash
-# standard 变体
-cargo xtask run --release --flavor standard
+# 默认安装 standard debug
+./x run
 
-# legacy 变体
-cargo xtask run --release --flavor legacy
+./x run --flavor standard --release
+./x run --flavor legacy
+```
 
-# 可选: 应用基准配置 (Baseline Profile)
+当前 `run` 命令执行 `installStandardDebug`、`installStandardRelease` 或对应的 legacy
+Gradle 任务。它会先为默认的 ARM64 / ARM32 ABI 重新构建 native 库。
+
+存在多个 adb 设备时, 可通过 `ANDROID_SERIAL` 选择设备:
+
+```bash
+ANDROID_SERIAL=SERIAL ./x run
+```
+
+可选: 应用基准配置 (Baseline Profile):
+
+```bash
 adb shell cmd package compile -m speed-profile dev.ujhhgtg.wekit
 ```
+
+### 检查 Rust native 库
+
+```bash
+./x configure
+./x check
+./x clippy
+
+# 只检查指定 ABI; --abi 可以重复
+./x check --abi arm64-v8a
+./x clippy --abi arm64-v8a --abi armeabi-v7a
+```
+
+`check` 和 `clippy` 默认检查 `arm64-v8a` 与 `armeabi-v7a`, 这也是全部可用 ABI。
+
+## 5. Zygisk 模块
+
+Zygisk 模块使用 standard APK payload, 支持 `arm64-v8a` 和 `armeabi-v7a`。
+
+### 构建 ZIP
+
+```bash
+# 默认: debug APK、两种 ABI 的 release loader 和 release ZIP
+./x zygisk build
+
+# release APK + release Zygisk
+./x zygisk build --apk-release --release --force
+
+# release APK + debug Zygisk
+./x zygisk build --apk-release --debug
+
+# 复用已有 standard APK 输出
+./x zygisk build --skip-apk-build
+
+# 为每种 ABI 显式指定 APK
+./x zygisk build --skip-apk-build \
+  --apk app/build/outputs/apk/standard/debug/app-standard-arm64-v8a-debug.apk \
+  --apk app/build/outputs/apk/standard/debug/app-standard-armeabi-v7a-debug.apk
+
+# 同时保存未剥离 native 符号
+./x zygisk build --save-symbols
+```
+
+常用参数:
+
+| 参数 | 说明 |
+|------|------|
+| `--apk-debug` | 构建或自动选择 debug APK, 默认行为 |
+| `--apk-release` | 构建或自动选择 release APK |
+| `--debug` | 使用 Debug Zygisk loader 和 debug ZIP |
+| `--release` | 使用 RelWithDebInfo Zygisk loader 和 release ZIP, 默认行为 |
+| `--force` | 构建前删除对应 CMake 构建树、native 输出和未剥离符号 |
+| `--ndk <VERSION>` | 覆盖 `gradle/libs.versions.toml` 中的 Zygisk NDK 版本 |
+| `--skip-apk-build` | 不执行 Gradle, 按 APK profile 复用现有 APK |
+| `--apk <PATH>` | 指定 payload APK, 每种 ABI 重复一次 |
+| `--save-symbols` | 额外生成未剥离 native 符号 ZIP |
+
+模块 ZIP 输出到:
+
+```none
+wekit-zygisk/release/WeKit-<versionCode>-git+<commit>-<debug|release>.zip
+```
+
+使用 `--save-symbols` 时, 符号包输出到:
+
+```none
+wekit-zygisk/symbols/WeKit-<versionCode>-git+<commit>-<debug|release>-symbols.zip
+```
+
+### 配置、native 构建与清理
+
+```bash
+# 默认生成 release 配置; 使用 --debug 生成 debug 配置
+./x zygisk config
+./x zygisk config --debug --abi arm64-v8a
+
+# 默认构建 release loader; 使用 --debug 构建 debug loader
+./x zygisk native
+./x zygisk native --debug --force --abi arm64-v8a
+
+# 清理两种 profile 的 CMake 构建树、loader 库和未剥离符号
+./x zygisk clean
+
+# 只清理指定 profile / ABI
+./x zygisk clean --profile release --abi arm64-v8a
+```
+
+`zygisk config` 和 `zygisk native` 默认处理两种受支持 ABI, 并使用 release profile。
+`--abi` 可以重复, 也接受 `arm64`、`aarch64`、`arm32` 等别名。release loader 使用
+CMake `RelWithDebInfo`, debug loader 使用 CMake `Debug`。
+
+### 安装到设备
+
+```bash
+# 默认构建 release ZIP, 安装到指定设备的 KernelSU, 然后重启
+./x zygisk flash --device SERIAL --root ksu --reboot
+
+# 安装 release 目录中最新的 release ZIP, 不重新构建
+./x zygisk flash --skip-build
+
+# 安装最新的 debug ZIP
+./x zygisk flash --debug --skip-build
+```
+
+`--device` 未指定时使用 adb 默认设备。`--root` 支持 `magisk`、`ksu` 和 `ap`, 也接受
+`kernelsu`、`apatch` 别名; 未指定时由安装脚本自动检测。`--reboot` 仅在安装成功后
+重启设备。
+
+`--skip-build` 按 Zygisk profile 选择 release 或 debug ZIP, 再使用
+`wekit-zygisk/release/` 中修改时间最新的对应 ZIP。

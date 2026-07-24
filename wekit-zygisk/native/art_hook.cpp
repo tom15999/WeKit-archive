@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <array>
 #include <unordered_map>
+#include <vector>
 
 #define TAG "WekitArtHook"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -63,6 +64,7 @@ namespace
     static SuspendAllDtor g_suspend_all_dtor = nullptr;
     static SetNotIntrinsic g_set_not_intrinsic = nullptr;
     static SetDexFileTrusted g_set_dex_file_trusted = nullptr;
+    static jmethodID g_set_dex_file_trusted_method = nullptr;
     static SetRuntimeDebugState g_set_runtime_debug_state = nullptr;
     static SetJavaDebuggable g_set_java_debuggable = nullptr;
     static void **g_runtime_instance = nullptr;
@@ -184,35 +186,13 @@ namespace
                       : strcmp(candidate, name) == 0;
     }
 
-    static void *resolve_art_symbol_from_file(const char *path, uintptr_t loaded_base,
-                                              const char *name, bool prefix)
+    static const NativeElfShdr *get_elf_sections(const uint8_t *base,
+                                                  size_t image_size,
+                                                  const NativeElfEhdr **out_ehdr)
     {
-        if (!path || path[0] == '\0' || loaded_base == 0)
+        if (!base || image_size < sizeof(NativeElfEhdr))
             return nullptr;
-
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0)
-            return nullptr;
-
-        struct stat st{};
-        if (fstat(fd, &st) != 0 || st.st_size <= 0)
-        {
-            close(fd);
-            return nullptr;
-        }
-        const size_t image_size = static_cast<size_t>(st.st_size);
-        void *image = mmap(nullptr, image_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        close(fd);
-        if (image == MAP_FAILED)
-            return nullptr;
-
-        void *result = nullptr;
-        const auto *base = static_cast<const uint8_t *>(image);
         const auto *ehdr = reinterpret_cast<const NativeElfEhdr *>(base);
-        const NativeElfShdr *sections = nullptr;
-        if (image_size < sizeof(NativeElfEhdr))
-            goto done;
-
         if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
             ehdr->e_ident[EI_CLASS] !=
 #if defined(__LP64__)
@@ -226,10 +206,24 @@ namespace
                                 sizeof(NativeElfShdr),
                             image_size))
         {
-            goto done;
+            return nullptr;
         }
+        *out_ehdr = ehdr;
+        return reinterpret_cast<const NativeElfShdr *>(base + ehdr->e_shoff);
+    }
 
-        sections = reinterpret_cast<const NativeElfShdr *>(base + ehdr->e_shoff);
+    static void *resolve_symbol_from_elf_image(const uint8_t *base,
+                                                size_t image_size,
+                                                uintptr_t loaded_base,
+                                                const char *name, bool prefix)
+    {
+        const NativeElfEhdr *ehdr = nullptr;
+        const NativeElfShdr *sections =
+            get_elf_sections(base, image_size, &ehdr);
+        if (!sections)
+            return nullptr;
+
+        void *result = nullptr;
         // Search dynsym first so a public ART export does not depend on a retained
         // symtab.
         for (int pass = 0; pass < 2 && !result; ++pass)
@@ -277,8 +271,165 @@ namespace
                 }
             }
         }
+        return result;
+    }
 
-    done:
+    // libart's mini debug data uses XZ. libart itself links liblzma, so resolve
+    // the decoder only when an OEM has stripped a needed local ART symbol.
+    using LzmaStreamBufferDecode = int (*)(uint64_t *, uint32_t, const void *,
+                                           const uint8_t *, size_t *, size_t,
+                                           uint8_t *, size_t *, size_t);
+
+    static LzmaStreamBufferDecode get_lzma_stream_buffer_decode()
+    {
+        static LzmaStreamBufferDecode decode = [] {
+            void *symbol = dlsym(RTLD_DEFAULT, "lzma_stream_buffer_decode");
+            if (!symbol)
+            {
+                // Keep this handle open: the returned function pointer is used for
+                // the process lifetime after ART has loaded liblzma.
+                void *handle = dlopen("liblzma.so", RTLD_NOW | RTLD_LOCAL);
+                if (handle)
+                    symbol = dlsym(handle, "lzma_stream_buffer_decode");
+            }
+            return reinterpret_cast<LzmaStreamBufferDecode>(symbol);
+        }();
+        return decode;
+    }
+
+    static bool decompress_xz(const uint8_t *input, size_t input_size,
+                              std::vector<uint8_t> *output)
+    {
+        constexpr int kLzmaOk = 0;
+        constexpr int kLzmaBufError = 10;
+        constexpr size_t kInitialOutputSize = 1024 * 1024;
+        constexpr size_t kMaxOutputSize = 64 * 1024 * 1024;
+
+        const auto decode = get_lzma_stream_buffer_decode();
+        if (!decode || !input || input_size == 0 || !output)
+            return false;
+
+        size_t output_size = input_size;
+        if (output_size < kInitialOutputSize)
+            output_size = kInitialOutputSize;
+        while (output_size <= kMaxOutputSize)
+        {
+            output->resize(output_size);
+            uint64_t memory_limit = UINT64_MAX;
+            size_t input_position = 0;
+            size_t output_position = 0;
+            const int result = decode(&memory_limit, 0, nullptr, input,
+                                      &input_position, input_size, output->data(),
+                                      &output_position, output->size());
+            if (result == kLzmaOk && input_position == input_size)
+            {
+                output->resize(output_position);
+                return true;
+            }
+            if (result != kLzmaBufError || output_size > kMaxOutputSize / 2)
+                break;
+            output_size *= 2;
+        }
+        output->clear();
+        return false;
+    }
+
+    static void *resolve_art_symbol_from_gnu_debugdata(const char *path,
+                                                        uintptr_t loaded_base,
+                                                        const char *name,
+                                                        bool prefix)
+    {
+        if (!path || path[0] == '\0' || loaded_base == 0)
+            return nullptr;
+
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            return nullptr;
+
+        struct stat st{};
+        if (fstat(fd, &st) != 0 || st.st_size <= 0)
+        {
+            close(fd);
+            return nullptr;
+        }
+        const size_t image_size = static_cast<size_t>(st.st_size);
+        void *image = mmap(nullptr, image_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
+        if (image == MAP_FAILED)
+            return nullptr;
+
+        void *result = nullptr;
+        const auto *base = static_cast<const uint8_t *>(image);
+        const NativeElfEhdr *ehdr = nullptr;
+        const NativeElfShdr *sections =
+            get_elf_sections(base, image_size, &ehdr);
+        if (sections && ehdr->e_shstrndx < ehdr->e_shnum)
+        {
+            const NativeElfShdr &section_names = sections[ehdr->e_shstrndx];
+            if (range_is_valid(section_names.sh_offset, section_names.sh_size,
+                               image_size))
+            {
+                const auto *section_name_table = reinterpret_cast<const char *>(
+                    base + section_names.sh_offset);
+                for (uint16_t i = 0; i < ehdr->e_shnum; ++i)
+                {
+                    const NativeElfShdr &section = sections[i];
+                    if (section.sh_name >= section_names.sh_size ||
+                        !range_is_valid(section.sh_offset, section.sh_size,
+                                        image_size))
+                    {
+                        continue;
+                    }
+                    const char *section_name = section_name_table + section.sh_name;
+                    const size_t remaining = section_names.sh_size - section.sh_name;
+                    if (strnlen(section_name, remaining) == remaining ||
+                        strcmp(section_name, ".gnu_debugdata") != 0)
+                    {
+                        continue;
+                    }
+
+                    std::vector<uint8_t> debug_image;
+                    if (decompress_xz(base + section.sh_offset, section.sh_size,
+                                      &debug_image))
+                    {
+                        result = resolve_symbol_from_elf_image(
+                            debug_image.data(), debug_image.size(), loaded_base,
+                            name, prefix);
+                    }
+                    break;
+                }
+            }
+        }
+
+        munmap(image, image_size);
+        return result;
+    }
+
+    static void *resolve_art_symbol_from_file(const char *path, uintptr_t loaded_base,
+                                              const char *name, bool prefix)
+    {
+        if (!path || path[0] == '\0' || loaded_base == 0)
+            return nullptr;
+
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            return nullptr;
+
+        struct stat st{};
+        if (fstat(fd, &st) != 0 || st.st_size <= 0)
+        {
+            close(fd);
+            return nullptr;
+        }
+        const size_t image_size = static_cast<size_t>(st.st_size);
+        void *image = mmap(nullptr, image_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
+        if (image == MAP_FAILED)
+            return nullptr;
+
+        void *result = resolve_symbol_from_elf_image(
+            static_cast<const uint8_t *>(image), image_size, loaded_base, name,
+            prefix);
         munmap(image, image_size);
         return result;
     }
@@ -596,7 +747,7 @@ namespace
                 // ART's ScopedSuspendAll is a field-less RAII wrapper in AOSP.  Match
                 // FunBox/LSPlant by passing this wrapper object directly instead of
                 // constructing into a guessed fixed-size byte buffer.
-                g_suspend_all_ctor(this, "FunHooker Hooking", false);
+                g_suspend_all_ctor(this, "ArtHooker Hooking", false);
             }
         }
 
@@ -772,6 +923,33 @@ namespace
         write_u32(art_method + g_access_flags_offset, flags);
     }
 
+    static bool has_dex_file_trust_backend()
+    {
+        return g_set_dex_file_trusted || g_set_dex_file_trusted_method;
+    }
+
+    static jmethodID resolve_dex_file_set_trusted_method(JNIEnv *env)
+    {
+        if (!env)
+            return nullptr;
+
+        jclass dex_file_class = env->FindClass("dalvik/system/DexFile");
+        if (!dex_file_class)
+        {
+            env->ExceptionClear();
+            return nullptr;
+        }
+        jmethodID method = env->GetStaticMethodID(
+            dex_file_class, "setTrusted", "(Ljava/lang/Object;)V");
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionClear();
+            method = nullptr;
+        }
+        env->DeleteLocalRef(dex_file_class);
+        return method;
+    }
+
     // Discovers Runtime::debug_state_'s offset by calling SetRuntimeDebugState on a zeroed
     // scratch Runtime-shaped buffer, toggles the real runtime's state directly,
     // then invokes Runtime::SetJavaDebuggable.
@@ -820,9 +998,9 @@ namespace
 
     static bool trust_dex_file(JNIEnv *env, jobject dex_file)
     {
-        if (!dex_file || !g_set_dex_file_trusted)
+        if (!dex_file || !has_dex_file_trust_backend())
         {
-            LOGE("dex_cookie_set_trusted is nullptr");
+            LOGE("DexFile.setTrusted backend is unavailable");
             return false;
         }
         jclass dex_file_class = env->FindClass("dalvik/system/DexFile");
@@ -853,11 +1031,21 @@ namespace
         }
 
         set_funbox_trust_debug_state(true);
-        g_set_dex_file_trusted(env, dex_file_class, cookie);
+        if (g_set_dex_file_trusted)
+        {
+            g_set_dex_file_trusted(env, dex_file_class, cookie);
+        }
+        else
+        {
+            // Some OEM ART builds strip the local native function from the
+            // runtime symbol tables. Call the same registered JNI method.
+            env->CallStaticVoidMethod(dex_file_class,
+                                      g_set_dex_file_trusted_method, cookie);
+        }
         const bool ok = !env->ExceptionCheck();
         if (!ok)
         {
-            LOGE("dex_cookie_set_trusted exception");
+            LOGE("DexFile.setTrusted exception");
             jthrowable exception = env->ExceptionOccurred();
             env->ExceptionClear();
             if (exception)
@@ -874,7 +1062,7 @@ namespace
 bool art_trust_dex_file(JNIEnv *env, jobject dex_file)
 {
     if (!g_initialized.load(std::memory_order_acquire) || !env || !dex_file ||
-        !g_set_dex_file_trusted)
+        !has_dex_file_trust_backend())
     {
         return false;
     }
@@ -931,6 +1119,18 @@ bool art_hook_init(JNIEnv *env)
         resolve_art_symbol("_ZN3art9ArtMethod15SetNotIntrinsicEv", false);
     auto *set_trusted = resolve_art_symbol(
         "_ZN3artL18DexFile_setTrustedEP7_JNIEnvP7_jclassP8_jobject", true);
+    if (!set_trusted)
+    {
+        set_trusted = resolve_art_symbol_from_gnu_debugdata(
+            g_art_library.path, g_art_library.base,
+            "_ZN3artL18DexFile_setTrustedEP7_JNIEnvP7_jclassP8_jobject", true);
+        if (set_trusted)
+        {
+            LOGI("DexFile_setTrusted resolved from libart .gnu_debugdata");
+        }
+    }
+    jmethodID set_trusted_method =
+        set_trusted ? nullptr : resolve_dex_file_set_trusted_method(env);
     auto *runtime_instance =
         resolve_art_symbol("_ZN3art7Runtime9instance_E", false);
     auto *set_runtime_debug_state = resolve_art_symbol(
@@ -938,10 +1138,12 @@ bool art_hook_init(JNIEnv *env)
         false);
     auto *set_java_debuggable =
         resolve_art_symbol("_ZN3art7Runtime17SetJavaDebuggableEb", false);
-    if (!suspend_ctor || !suspend_dtor || !set_trusted)
+    if (!suspend_ctor || !suspend_dtor ||
+        (!set_trusted && !set_trusted_method))
     {
-        LOGE("required ART symbol missing: suspend_ctor=%p suspend_dtor=%p trusted=%p",
-             suspend_ctor, suspend_dtor, set_trusted);
+        LOGE("required ART entry missing: suspend_ctor=%p suspend_dtor=%p "
+             "trusted_symbol=%p trusted_method=%p",
+             suspend_ctor, suspend_dtor, set_trusted, set_trusted_method);
         pthread_mutex_unlock(&g_hook_mutex);
         return false;
     }
@@ -953,6 +1155,7 @@ bool art_hook_init(JNIEnv *env)
     g_suspend_all_dtor = reinterpret_cast<SuspendAllDtor>(suspend_dtor);
     g_set_not_intrinsic = reinterpret_cast<SetNotIntrinsic>(set_not_intrinsic);
     g_set_dex_file_trusted = reinterpret_cast<SetDexFileTrusted>(set_trusted);
+    g_set_dex_file_trusted_method = set_trusted_method;
     g_runtime_instance = reinterpret_cast<void **>(runtime_instance);
     g_set_runtime_debug_state =
         reinterpret_cast<SetRuntimeDebugState>(set_runtime_debug_state);
@@ -966,6 +1169,10 @@ bool art_hook_init(JNIEnv *env)
     if (!g_set_not_intrinsic)
     {
         LOGW("ArtMethod::SetNotIntrinsic unavailable; using access-flag fallback");
+    }
+    if (!g_set_dex_file_trusted)
+    {
+        LOGW("DexFile_setTrusted symbol unavailable; using registered JNI method");
     }
     if (!initialize_trampoline_pool())
     {
@@ -1140,7 +1347,7 @@ bool art_unhook_method(JNIEnv *, uintptr_t target_art, uintptr_t backup_art)
 bool art_trust_class_loader(JNIEnv *env, jobject class_loader)
 {
     if (!g_initialized.load(std::memory_order_acquire) || !env || !class_loader ||
-        !g_set_dex_file_trusted)
+        !has_dex_file_trust_backend())
     {
         return false;
     }
