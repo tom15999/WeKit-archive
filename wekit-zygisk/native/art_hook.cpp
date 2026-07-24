@@ -22,7 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
-#define TAG "WekitArtHook"
+#define TAG "WeKit"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -164,10 +164,10 @@ namespace
         dl_iterate_phdr(locate_art_library, &g_art_library);
         if (g_art_library.base == 0)
         {
-            LOGE("could not locate loaded libart.so");
+            LOGE("ArtHooker: could not locate loaded libart.so");
             return false;
         }
-        LOGI("libart: base=%p path=%s", reinterpret_cast<void *>(g_art_library.base),
+        LOGI("ArtHooker: libart: base=%p path=%s", reinterpret_cast<void *>(g_art_library.base),
              g_art_library.path[0] ? g_art_library.path : "<unknown>");
         return true;
     }
@@ -187,8 +187,8 @@ namespace
     }
 
     static const NativeElfShdr *get_elf_sections(const uint8_t *base,
-                                                  size_t image_size,
-                                                  const NativeElfEhdr **out_ehdr)
+                                                 size_t image_size,
+                                                 const NativeElfEhdr **out_ehdr)
     {
         if (!base || image_size < sizeof(NativeElfEhdr))
             return nullptr;
@@ -213,9 +213,9 @@ namespace
     }
 
     static void *resolve_symbol_from_elf_image(const uint8_t *base,
-                                                size_t image_size,
-                                                uintptr_t loaded_base,
-                                                const char *name, bool prefix)
+                                               size_t image_size,
+                                               uintptr_t loaded_base,
+                                               const char *name, bool prefix)
     {
         const NativeElfEhdr *ehdr = nullptr;
         const NativeElfShdr *sections =
@@ -282,7 +282,8 @@ namespace
 
     static LzmaStreamBufferDecode get_lzma_stream_buffer_decode()
     {
-        static LzmaStreamBufferDecode decode = [] {
+        static LzmaStreamBufferDecode decode = []
+        {
             void *symbol = dlsym(RTLD_DEFAULT, "lzma_stream_buffer_decode");
             if (!symbol)
             {
@@ -335,9 +336,9 @@ namespace
     }
 
     static void *resolve_art_symbol_from_gnu_debugdata(const char *path,
-                                                        uintptr_t loaded_base,
-                                                        const char *name,
-                                                        bool prefix)
+                                                       uintptr_t loaded_base,
+                                                       const char *name,
+                                                       bool prefix)
     {
         if (!path || path[0] == '\0' || loaded_base == 0)
             return nullptr;
@@ -810,7 +811,7 @@ namespace
         g_trampoline_pool.executable = executable;
         g_trampoline_pool.writable = writable;
         g_trampoline_pool.used = 0;
-        LOGI("trampoline pool: rw=%p rx=%p", writable, executable);
+        LOGI("ArtHooker: trampoline pool: rw=%p rx=%p", writable, executable);
         return true;
     }
 
@@ -982,12 +983,12 @@ namespace
             }
             else
             {
-                LOGW("Runtime::debug_state_ offset not found");
+                LOGW("ArtHooker: Runtime::debug_state_ offset not found");
             }
         }
         else
         {
-            LOGW("Runtime::instance_ or SetRuntimeDebugState unavailable");
+            LOGW("ArtHooker: Runtime::instance_ or SetRuntimeDebugState unavailable");
         }
 
         if (g_runtime_instance && *g_runtime_instance && g_set_java_debuggable)
@@ -1126,7 +1127,7 @@ bool art_hook_init(JNIEnv *env)
             "_ZN3artL18DexFile_setTrustedEP7_JNIEnvP7_jclassP8_jobject", true);
         if (set_trusted)
         {
-            LOGI("DexFile_setTrusted resolved from libart .gnu_debugdata");
+            LOGI("ArtHooker: DexFile_setTrusted resolved from libart .gnu_debugdata");
         }
     }
     jmethodID set_trusted_method =
@@ -1168,11 +1169,11 @@ bool art_hook_init(JNIEnv *env)
         api < 29 ? 0 : kAccFastInterpreterToInterpreterInvoke;
     if (!g_set_not_intrinsic)
     {
-        LOGW("ArtMethod::SetNotIntrinsic unavailable; using access-flag fallback");
+        LOGW("ArtHooker: ArtMethod::SetNotIntrinsic unavailable; using access-flag fallback");
     }
     if (!g_set_dex_file_trusted)
     {
-        LOGW("DexFile_setTrusted symbol unavailable; using registered JNI method");
+        LOGW("ArtHooker: DexFile_setTrusted symbol unavailable; using registered JNI method");
     }
     if (!initialize_trampoline_pool())
     {
@@ -1180,7 +1181,7 @@ bool art_hook_init(JNIEnv *env)
         return false;
     }
 
-    LOGI("ART layout: method_size=%zu entry_offset=%zu access_flags_offset=%zu "
+    LOGI("ArtHooker: ART layout: method_size=%zu entry_offset=%zu access_flags_offset=%zu "
          "api=%d",
          g_art_method_size, g_entry_point_offset, g_access_flags_offset, api);
     g_initialized.store(true, std::memory_order_release);
@@ -1296,7 +1297,7 @@ bool art_hook_method(JNIEnv *, uintptr_t target_art, uintptr_t backup_art,
     bridge_writable.restore();
     backup_writable.restore();
     target_writable.restore();
-    LOGI("hooked target=%p bridge=%p trampoline=%p",
+    LOGI("ArtHooker: hooked target=%p bridge=%p trampoline=%p",
          reinterpret_cast<void *>(target_art),
          reinterpret_cast<void *>(bridge_art), trampoline);
     pthread_mutex_unlock(&g_hook_mutex);
@@ -1313,7 +1314,7 @@ bool art_unhook_method(JNIEnv *, uintptr_t target_art, uintptr_t backup_art)
     ScopedArtMutation mutation;
     if (!mutation.active())
     {
-        LOGE("ART mutation suspend guard is unavailable");
+        LOGE("ArtHooker: ART mutation suspend guard is unavailable");
         pthread_mutex_unlock(&g_hook_mutex);
         return false;
     }
@@ -1322,7 +1323,7 @@ bool art_unhook_method(JNIEnv *, uintptr_t target_art, uintptr_t backup_art)
     if (record == g_hook_records.end() ||
         record->second.backup_art != backup_art)
     {
-        LOGE("unhook target=%p has no matching active hook",
+        LOGE("ArtHooker: unhook target=%p has no matching active hook",
              reinterpret_cast<void *>(target_art));
         pthread_mutex_unlock(&g_hook_mutex);
         return false;
@@ -1379,7 +1380,7 @@ bool art_trust_class_loader(JNIEnv *env, jobject class_loader)
         env->DeleteLocalRef(base_loader_class);
         env->DeleteLocalRef(path_list_class);
         env->DeleteLocalRef(element_class);
-        LOGE("could not resolve BaseDexClassLoader DexFile fields");
+        LOGE("ArtHooker: could not resolve BaseDexClassLoader DexFile fields");
         return false;
     }
 
@@ -1437,11 +1438,11 @@ bool art_trust_class_loader(JNIEnv *env, jobject class_loader)
     env->DeleteLocalRef(element_class);
     if (!success || trusted_count == 0)
     {
-        LOGE("failed to trust every DexFile in class loader (trusted=%d)",
+        LOGE("ArtHooker: failed to trust every DexFile in class loader (trusted=%d)",
              trusted_count);
         return false;
     }
-    LOGI("trusted %d DexFile(s) for class loader %p", trusted_count,
+    LOGI("ArtHooker: trusted %d DexFile(s) for class loader %p", trusted_count,
          class_loader);
     return true;
 }

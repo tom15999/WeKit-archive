@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <vector>
 
-#define TAG "WekitSoHider"
+#define TAG "WeKit"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -94,7 +94,7 @@ static bool remap_segment(const MapEntry *e)
     int orig_prot = e->prot;
     if (orig_prot == 0)
     {
-        LOGI("remap: skipping PROT_NONE segment at 0x%zx", (size_t)e->start);
+        LOGI("SoHider: remap: skipping PROT_NONE segment at 0x%zx", (size_t)e->start);
         return true;
     }
 
@@ -107,7 +107,7 @@ static bool remap_segment(const MapEntry *e)
         {
             if (mprotect(reinterpret_cast<void *>(e->start), len, orig_prot) != 0)
             {
-                LOGW("remap: restore protection failed for %zx: %s", (size_t)e->start,
+                LOGW("SoHider: remap: restore protection failed for %zx: %s", (size_t)e->start,
                      strerror(errno));
             }
             read_protection_changed = false;
@@ -118,7 +118,7 @@ static bool remap_segment(const MapEntry *e)
         if (mprotect(reinterpret_cast<void *>(e->start), len,
                      orig_prot | PROT_READ) != 0)
         {
-            LOGW("remap: mprotect(+READ) failed for %zx: %s", (size_t)e->start,
+            LOGW("SoHider: remap: mprotect(+READ) failed for %zx: %s", (size_t)e->start,
                  strerror(errno));
             return false;
         }
@@ -129,14 +129,14 @@ static bool remap_segment(const MapEntry *e)
     int mfd = memfd_create_compat("wk", MFD_CLOEXEC);
     if (mfd < 0)
     {
-        LOGE("remap: memfd_create failed: %s", strerror(errno));
+        LOGE("SoHider: remap: memfd_create failed: %s", strerror(errno));
         restore_original_protection();
         return false;
     }
 
     if (ftruncate(mfd, static_cast<off_t>(len)) != 0)
     {
-        LOGE("remap: ftruncate failed: %s", strerror(errno));
+        LOGE("SoHider: remap: ftruncate failed: %s", strerror(errno));
         close(mfd);
         restore_original_protection();
         return false;
@@ -150,7 +150,7 @@ static bool remap_segment(const MapEntry *e)
         ssize_t r = write(mfd, src + written, len - written);
         if (r <= 0)
         {
-            LOGE("remap: write to memfd failed: %s", strerror(errno));
+            LOGE("SoHider: remap: write to memfd failed: %s", strerror(errno));
             close(mfd);
             restore_original_protection();
             return false;
@@ -164,7 +164,7 @@ static bool remap_segment(const MapEntry *e)
     {
         if (mprotect(reinterpret_cast<void *>(e->start), len, orig_prot) != 0)
         {
-            LOGW("remap: restore protection before mmap failed for %zx: %s",
+            LOGW("SoHider: remap: restore protection before mmap failed for %zx: %s",
                  (size_t)e->start, strerror(errno));
             close(mfd);
             read_protection_changed = false;
@@ -184,7 +184,7 @@ static bool remap_segment(const MapEntry *e)
                     MAP_PRIVATE | MAP_FIXED, mfd, 0);
         if (addr == MAP_FAILED)
         {
-            LOGW("remap: mmap(direct exec) failed at 0x%zx: %s", (size_t)e->start,
+            LOGW("SoHider: remap: mmap(direct exec) failed at 0x%zx: %s", (size_t)e->start,
                  strerror(errno));
             close(mfd);
             return false;
@@ -200,7 +200,7 @@ static bool remap_segment(const MapEntry *e)
 
     if (addr == MAP_FAILED)
     {
-        LOGE("remap: mmap(MAP_FIXED) at 0x%zx failed: %s", (size_t)e->start,
+        LOGE("SoHider: remap: mmap(MAP_FIXED) at 0x%zx failed: %s", (size_t)e->start,
              strerror(errno));
         return false;
     }
@@ -210,7 +210,7 @@ static bool remap_segment(const MapEntry *e)
     {
         if (mprotect(addr, len, orig_prot) != 0)
         {
-            LOGW("remap: mprotect to 0x%x failed: %s", orig_prot, strerror(errno));
+            LOGW("SoHider: remap: mprotect to 0x%x failed: %s", orig_prot, strerror(errno));
             return false;
         }
     }
@@ -232,7 +232,7 @@ int so_hide_path(const char *needle)
         int probe = memfd_create_compat("probe", MFD_CLOEXEC);
         if (probe < 0)
         {
-            LOGI("so_hide_path: memfd_create unavailable");
+            LOGI("SoHider: so_hide_path: memfd_create unavailable");
             return 0;
         }
         close(probe);
@@ -241,7 +241,7 @@ int so_hide_path(const char *needle)
     FILE *maps = fopen("/proc/self/maps", "r");
     if (!maps)
     {
-        LOGE("so_hide_path: cannot open /proc/self/maps: %s", strerror(errno));
+        LOGE("SoHider: so_hide_path: cannot open /proc/self/maps: %s", strerror(errno));
         return -1;
     }
 
@@ -265,7 +265,7 @@ int so_hide_path(const char *needle)
     int remapped = 0;
     for (const MapEntry &entry : entries)
     {
-        LOGI("so_hide_path: remapping [0x%zx-0x%zx] %s", (size_t)entry.start,
+        LOGI("SoHider: so_hide_path: remapping [0x%zx-0x%zx] %s", (size_t)entry.start,
              (size_t)entry.end, entry.path);
         if (remap_segment(&entry))
         {
@@ -273,7 +273,7 @@ int so_hide_path(const char *needle)
         }
     }
 
-    LOGI("so_hide_path: %d/%zu maps hidden for needle '%s'", remapped,
+    LOGI("SoHider: so_hide_path: %d/%zu maps hidden for needle '%s'", remapped,
          entries.size(), needle);
     return remapped;
 }

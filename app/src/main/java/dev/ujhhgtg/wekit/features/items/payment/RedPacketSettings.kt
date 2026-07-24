@@ -127,7 +127,7 @@ internal object RedPacketSettings {
             val start = timeRange.startMinute.coerceIn(0, MINUTES_PER_DAY - 1)
             val end = timeRange.endMinute.coerceIn(0, MINUTES_PER_DAY - 1)
             if (start == end) return true
-            return if (start < end) current in start until end else current >= start || current < end
+            return if (start < end) current in start until end else current !in end..<start
         }
 
         fun matchesKeyword(text: String): Boolean {
@@ -1050,8 +1050,8 @@ internal object RedPacketSettings {
             "500"
         }
         val migratedDelayBase = if (
-            (legacyDelayRange.toLongOrNull() ?: 0L) > 0L &&
-            (legacyDelayBase.toLongOrNull() ?: 0L) <= 0L
+            legacyDelayRange.toLongOrNull() ?: 0L > 0L &&
+            legacyDelayBase.toLongOrNull() ?: 0L <= 0L
         ) {
             "1000"
         } else {

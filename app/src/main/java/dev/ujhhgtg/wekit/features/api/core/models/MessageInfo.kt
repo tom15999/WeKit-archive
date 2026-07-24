@@ -6,7 +6,6 @@ import android.content.ContentValues
 import dev.ujhhgtg.reflekt.reflekt
 import dev.ujhhgtg.wekit.features.api.core.WeApi
 import dev.ujhhgtg.wekit.features.api.core.WeMessageApi
-import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.serialization.NativeXmlParser
 import dev.ujhhgtg.wekit.utils.serialization.XmlObject
 import dev.ujhhgtg.wekit.utils.serialization.asInt
@@ -264,6 +263,15 @@ class MessageInfo(val instance: Any) {
         val receiverUsername by lazy { xml.getByPath("msg.appmsg.wcpayinfo.receiver_username")!!.asString }
         val invalidTime by lazy { xml.getByPath("msg.appmsg.wcpayinfo.invalidtime")!!.asString.toInt() }
         val feedesc by lazy { xml.getByPath("msg.appmsg.wcpayinfo.feedesc")!!.asString }
+        val totalFee by lazy {
+            xml.getByPath("msg.appmsg.wcpayinfo.total_fee")?.asString?.toLongOrNull() ?: 0L
+        }
+        val feeType by lazy {
+            xml.getByPath("msg.appmsg.wcpayinfo.fee_type")?.asString.orEmpty()
+        }
+        val payMemo by lazy {
+            xml.getByPath("msg.appmsg.wcpayinfo.pay_memo")?.asString.orEmpty()
+        }
     }
 
     companion object {

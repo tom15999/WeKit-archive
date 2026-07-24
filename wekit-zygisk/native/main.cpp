@@ -352,7 +352,7 @@ static bool send_file(int sock, const std::string &path, bool required)
     struct stat st{};
     if (path.empty())
     {
-        LOGE("companion: send_file called with empty path");
+        LOGE("ZygiskModule: companion: send_file called with empty path");
         return false;
     }
     if (stat(path.c_str(), &st) != 0)
@@ -362,18 +362,18 @@ static bool send_file(int sock, const std::string &path, bool required)
             const uint64_t absent = 0;
             return write_all(sock, &absent, sizeof(absent));
         }
-        LOGE("companion: stat %s failed: %s", path.c_str(), strerror(errno));
+        LOGE("ZygiskModule: companion: stat %s failed: %s", path.c_str(), strerror(errno));
         return false;
     }
     if (!S_ISREG(st.st_mode))
     {
-        LOGE("companion: %s is not a regular file", path.c_str());
+        LOGE("ZygiskModule: companion: %s is not a regular file", path.c_str());
         return false;
     }
     if (st.st_size < 0 ||
         static_cast<uint64_t>(st.st_size) > MAX_TELEGRAM_DATABASE_BYTES)
     {
-        LOGE("companion: %s size %" PRId64 " exceeds limit %" PRIu64,
+        LOGE("ZygiskModule: companion: %s size %" PRId64 " exceeds limit %" PRIu64,
              path.c_str(), static_cast<int64_t>(st.st_size),
              static_cast<uint64_t>(MAX_TELEGRAM_DATABASE_BYTES));
         return false;
@@ -381,7 +381,7 @@ static bool send_file(int sock, const std::string &path, bool required)
     const uint64_t size = static_cast<uint64_t>(st.st_size);
     if (!write_all(sock, &size, sizeof(size)))
     {
-        LOGW("companion: failed to write size for %s: client disconnected",
+        LOGW("ZygiskModule: companion: failed to write size for %s: client disconnected",
              path.c_str());
         return false;
     }
@@ -390,7 +390,7 @@ static bool send_file(int sock, const std::string &path, bool required)
     const int file = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (file < 0)
     {
-        LOGE("companion: open %s failed: %s", path.c_str(), strerror(errno));
+        LOGE("ZygiskModule: companion: open %s failed: %s", path.c_str(), strerror(errno));
         return false;
     }
     bool sent = true;
@@ -406,20 +406,20 @@ static bool send_file(int sock, const std::string &path, bool required)
         } while (count < 0 && errno == EINTR);
         if (count == 0)
         {
-            LOGW("companion: unexpected EOF reading %s (%" PRIu64 " bytes remaining)",
+            LOGW("ZygiskModule: companion: unexpected EOF reading %s (%" PRIu64 " bytes remaining)",
                  path.c_str(), remaining);
             sent = false;
             break;
         }
         if (count < 0)
         {
-            LOGE("companion: read %s failed: %s", path.c_str(), strerror(errno));
+            LOGE("ZygiskModule: companion: read %s failed: %s", path.c_str(), strerror(errno));
             sent = false;
             break;
         }
         if (!write_all(sock, buffer, static_cast<size_t>(count)))
         {
-            LOGW("companion: socket write failed sending %s: client disconnected",
+            LOGW("ZygiskModule: companion: socket write failed sending %s: client disconnected",
                  path.c_str());
             sent = false;
             break;
@@ -435,7 +435,7 @@ static bool handle_telegram_request(int sock, int user_id)
     uint8_t operation = 0;
     if (!read_all(sock, &operation, sizeof(operation)))
     {
-        LOGW("companion: failed to read Telegram request");
+        LOGW("ZygiskModule: companion: failed to read Telegram request");
         return false;
     }
     if (operation == TELEGRAM_REQUEST_DISCOVER)
@@ -484,7 +484,7 @@ static bool handle_telegram_request(int sock, int user_id)
         !send_file(sock, database + "-wal", false) ||
         !send_file(sock, database + "-shm", false))
     {
-        LOGW("companion: failed to send Telegram database snapshot for %s",
+        LOGW("ZygiskModule: companion: failed to send Telegram database snapshot for %s",
              package_name.c_str());
         return false;
     }
@@ -524,7 +524,7 @@ static void companion_handler(int sock)
     uint8_t request = 0;
     if (!read_all(sock, &request, sizeof(request)))
     {
-        LOGE("companion: failed to read request type");
+        LOGE("ZygiskModule: companion: failed to read request type");
         return;
     }
     jint uid = -1;
@@ -532,7 +532,7 @@ static void companion_handler(int sock)
     if (!read_all(sock, &uid, sizeof(uid)) ||
         !read_string(sock, process_name, MAX_PROCESS_NAME_BYTES))
     {
-        LOGE("companion: invalid request identity");
+        LOGE("ZygiskModule: companion: invalid request identity");
         return;
     }
     const bool enabled = is_enabled_target(uid, process_name);
@@ -540,12 +540,12 @@ static void companion_handler(int sock)
     {
         const uint8_t status = enabled ? COMPANION_ENABLED : COMPANION_DISABLED;
         if (!write_all(sock, &status, sizeof(status)))
-            LOGW("companion: failed to return target status");
+            LOGW("ZygiskModule: companion: failed to return target status");
         return;
     }
     if (request != COMPANION_REQUEST_TELEGRAM_SESSION)
     {
-        LOGW("companion: unsupported request type %u", request);
+        LOGW("ZygiskModule: companion: unsupported request type %u", request);
         return;
     }
     if (!enabled)
@@ -560,7 +560,7 @@ static void companion_handler(int sock)
     const int server_sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (server_sock < 0)
     {
-        LOGE("companion: failed to create Telegram worker socket: %s",
+        LOGE("ZygiskModule: companion: failed to create Telegram worker socket: %s",
              strerror(errno));
         const uint8_t status = COMPANION_DISABLED;
         write_all(sock, &status, sizeof(status));
@@ -598,7 +598,7 @@ static void companion_handler(int sock)
     if (bind(server_sock, reinterpret_cast<const sockaddr *>(&addr), socklen) != 0 ||
         listen(server_sock, 8) != 0)
     {
-        LOGE("companion: failed to bind/listen Telegram worker socket: %s",
+        LOGE("ZygiskModule: companion: failed to bind/listen Telegram worker socket: %s",
              strerror(errno));
         close(server_sock);
         const uint8_t status = COMPANION_DISABLED;
@@ -612,7 +612,7 @@ static void companion_handler(int sock)
     const pid_t intermediate = fork();
     if (intermediate < 0)
     {
-        LOGE("companion: fork for Telegram worker failed: %s", strerror(errno));
+        LOGE("ZygiskModule: companion: fork for Telegram worker failed: %s", strerror(errno));
         close(server_sock);
         const uint8_t err = COMPANION_DISABLED;
         write_all(sock, &err, sizeof(err));
@@ -650,7 +650,7 @@ static void companion_handler(int sock)
         // Worker will sit in accept() until the module re-connects or is
         // unloaded; the OS will clean it up when the device reboots or the
         // abstract socket is abandoned.
-        LOGW("companion: failed to send Telegram socket name to client");
+        LOGW("ZygiskModule: companion: failed to send Telegram socket name to client");
     }
 }
 
@@ -660,7 +660,7 @@ static int request_target_status(Api *api, jint uid,
     const int sock = api->connectCompanion();
     if (sock < 0)
     {
-        LOGE("preAppSpecialize: connectCompanion failed");
+        LOGE("ZygiskModule: preAppSpecialize: connectCompanion failed");
         return COMPANION_ERROR;
     }
 
@@ -673,7 +673,7 @@ static int request_target_status(Api *api, jint uid,
     close(sock);
     if (!received || status > COMPANION_ERROR)
     {
-        LOGE("preAppSpecialize: target-status companion exchange failed");
+        LOGE("ZygiskModule: preAppSpecialize: target-status companion exchange failed");
         return COMPANION_ERROR;
     }
     return status;
@@ -687,7 +687,7 @@ static std::string open_telegram_socket_name(Api *api, jint uid,
     const int sock = api->connectCompanion();
     if (sock < 0)
     {
-        LOGW("preAppSpecialize: unable to connect Telegram root companion");
+        LOGW("ZygiskModule: preAppSpecialize: unable to connect Telegram root companion");
         return {};
     }
     const uint8_t request = COMPANION_REQUEST_TELEGRAM_SESSION;
@@ -703,7 +703,7 @@ static std::string open_telegram_socket_name(Api *api, jint uid,
     close(sock);
     if (!ok || socket_name.empty())
     {
-        LOGW("preAppSpecialize: Telegram root companion socket unavailable");
+        LOGW("ZygiskModule: preAppSpecialize: Telegram root companion socket unavailable");
         return {};
     }
     return socket_name;
@@ -771,7 +771,7 @@ static bool read_module_text(int module_dir_fd, const std::string &relative,
                           O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
     {
-        LOGE("preAppSpecialize: cannot open module payload %s: %s",
+        LOGE("ZygiskModule: preAppSpecialize: cannot open module payload %s: %s",
              relative.c_str(), strerror(errno));
         return false;
     }
@@ -781,7 +781,7 @@ static bool read_module_text(int module_dir_fd, const std::string &relative,
                        static_cast<uintmax_t>(st.st_size) <= MAX_DEX_LIST_BYTES;
     if (!valid)
     {
-        LOGE("preAppSpecialize: invalid module text payload %s", relative.c_str());
+        LOGE("ZygiskModule: preAppSpecialize: invalid module text payload %s", relative.c_str());
         close(fd);
         return false;
     }
@@ -790,7 +790,7 @@ static bool read_module_text(int module_dir_fd, const std::string &relative,
     close(fd);
     if (!read_ok)
     {
-        LOGE("preAppSpecialize: failed reading module payload %s",
+        LOGE("ZygiskModule: preAppSpecialize: failed reading module payload %s",
              relative.c_str());
         out.clear();
     }
@@ -857,7 +857,7 @@ static bool ensure_directory(const std::string &path, mode_t mode)
         struct stat st{};
         return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
     }
-    LOGE("postAppSpecialize: cannot create directory %s: %s", path.c_str(),
+    LOGE("ZygiskModule: postAppSpecialize: cannot create directory %s: %s", path.c_str(),
          strerror(errno));
     return false;
 }
@@ -870,7 +870,7 @@ static bool copy_module_file(int module_dir_fd, const std::string &relative,
                               O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (source < 0)
     {
-        LOGE("postAppSpecialize: cannot open module payload %s: %s",
+        LOGE("ZygiskModule: postAppSpecialize: cannot open module payload %s: %s",
              relative.c_str(), strerror(errno));
         return false;
     }
@@ -879,7 +879,7 @@ static bool copy_module_file(int module_dir_fd, const std::string &relative,
         source_stat.st_size <= 0 ||
         static_cast<uintmax_t>(source_stat.st_size) > maximum_size)
     {
-        LOGE("postAppSpecialize: invalid module payload %s", relative.c_str());
+        LOGE("ZygiskModule: postAppSpecialize: invalid module payload %s", relative.c_str());
         close(source);
         return false;
     }
@@ -892,7 +892,7 @@ static bool copy_module_file(int module_dir_fd, const std::string &relative,
              O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (target < 0)
     {
-        LOGE("postAppSpecialize: cannot create %s: %s", temporary.c_str(),
+        LOGE("ZygiskModule: postAppSpecialize: cannot create %s: %s", temporary.c_str(),
              strerror(errno));
         close(source);
         return false;
@@ -939,7 +939,7 @@ static bool copy_module_file(int module_dir_fd, const std::string &relative,
     close(target);
     if (!copied || rename(temporary.c_str(), destination.c_str()) != 0)
     {
-        LOGE("postAppSpecialize: failed to publish %s: %s", destination.c_str(),
+        LOGE("ZygiskModule: postAppSpecialize: failed to publish %s: %s", destination.c_str(),
              strerror(errno));
         unlink(temporary.c_str());
         return false;
@@ -953,7 +953,7 @@ static bool read_copied_file(const std::string &path,
     const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
     {
-        LOGE("postAppSpecialize: cannot open copied DEX %s: %s", path.c_str(),
+        LOGE("ZygiskModule: postAppSpecialize: cannot open copied DEX %s: %s", path.c_str(),
              strerror(errno));
         return false;
     }
@@ -961,7 +961,7 @@ static bool read_copied_file(const std::string &path,
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
         static_cast<uintmax_t>(st.st_size) > MAX_DEX_FILE_BYTES)
     {
-        LOGE("postAppSpecialize: invalid copied DEX %s", path.c_str());
+        LOGE("ZygiskModule: postAppSpecialize: invalid copied DEX %s", path.c_str());
         close(fd);
         return false;
     }
@@ -970,7 +970,7 @@ static bool read_copied_file(const std::string &path,
     close(fd);
     if (!read_ok)
     {
-        LOGE("postAppSpecialize: failed to read copied DEX %s", path.c_str());
+        LOGE("ZygiskModule: postAppSpecialize: failed to read copied DEX %s", path.c_str());
         out.clear();
     }
     return read_ok;
@@ -1015,7 +1015,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
     {
         if (env->ExceptionCheck())
         {
-            LOGE("postAppSpecialize: InMemoryDexClassLoader bootstrap method lookup failed");
+            LOGE("ZygiskModule: postAppSpecialize: InMemoryDexClassLoader bootstrap method lookup failed");
             env->ExceptionDescribe();
             env->ExceptionClear();
         }
@@ -1050,7 +1050,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
         {
             if (env->ExceptionCheck())
             {
-                LOGE("postAppSpecialize: cannot allocate DEX byte[] for %s",
+                LOGE("ZygiskModule: postAppSpecialize: cannot allocate DEX byte[] for %s",
                      paths[static_cast<size_t>(index)].c_str());
                 env->ExceptionDescribe();
                 env->ExceptionClear();
@@ -1068,7 +1068,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
                                 reinterpret_cast<const jbyte *>(bytes.data()));
         if (env->ExceptionCheck())
         {
-            LOGE("postAppSpecialize: cannot populate DEX byte[] for %s",
+            LOGE("ZygiskModule: postAppSpecialize: cannot populate DEX byte[] for %s",
                  paths[static_cast<size_t>(index)].c_str());
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -1086,7 +1086,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
         {
             if (env->ExceptionCheck())
             {
-                LOGE("postAppSpecialize: ByteBuffer.wrap failed for %s",
+                LOGE("ZygiskModule: postAppSpecialize: ByteBuffer.wrap failed for %s",
                      paths[static_cast<size_t>(index)].c_str());
                 env->ExceptionDescribe();
                 env->ExceptionClear();
@@ -1104,7 +1104,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
         env->DeleteLocalRef(buffer);
         if (env->ExceptionCheck())
         {
-            LOGE("postAppSpecialize: cannot append ByteBuffer for %s",
+            LOGE("ZygiskModule: postAppSpecialize: cannot append ByteBuffer for %s",
                  paths[static_cast<size_t>(index)].c_str());
             env->ExceptionDescribe();
             env->ExceptionClear();
@@ -1125,7 +1125,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
     env->DeleteLocalRef(class_loader_class);
     if (env->ExceptionCheck() || !loader)
     {
-        LOGE("postAppSpecialize: InMemoryDexClassLoader constructor failed");
+        LOGE("ZygiskModule: postAppSpecialize: InMemoryDexClassLoader constructor failed");
         env->ExceptionDescribe();
         env->ExceptionClear();
         if (loader)
@@ -1139,7 +1139,7 @@ static bool load_copied_dex(JNIEnv *env, const std::vector<std::string> &paths,
     {
         if (env->ExceptionCheck())
         {
-            LOGE("postAppSpecialize: cannot retain InMemoryDexClassLoader");
+            LOGE("ZygiskModule: postAppSpecialize: cannot retain InMemoryDexClassLoader");
             env->ExceptionDescribe();
             env->ExceptionClear();
         }
@@ -1191,7 +1191,7 @@ static void log_and_clear_jni_exception(JNIEnv *env, const char *context)
 {
     if (!env->ExceptionCheck())
         return;
-    LOGE("%s", context);
+    LOGE("ZygiskModule: %s", context);
     env->ExceptionDescribe();
     env->ExceptionClear();
 }
@@ -1233,7 +1233,7 @@ static jclass load_class_from(JNIEnv *env, jobject classloader,
         return nullptr;
     }
     if (!result)
-        LOGE("ClassLoader.loadClass returned null for %s", class_name);
+        LOGE("ZygiskModule: ClassLoader.loadClass returned null for %s", class_name);
     return result;
 }
 
@@ -1273,7 +1273,7 @@ static bool register_hook_bridge_natives(JNIEnv *env, jobject classloader)
     const bool success = result == JNI_OK && !env->ExceptionCheck();
     if (!success)
     {
-        LOGE("RegisterNatives(ArtHookBridge) failed: rc=%d", result);
+        LOGE("ZygiskModule: RegisterNatives(ArtHookBridge) failed: rc=%d", result);
         log_and_clear_jni_exception(env,
                                     "RegisterNatives(ArtHookBridge) exception");
     }
@@ -1305,7 +1305,7 @@ static bool register_entry_natives(JNIEnv *env, jclass entry)
     const bool success = result == JNI_OK && !env->ExceptionCheck();
     if (!success)
     {
-        LOGE("RegisterNatives(ZygiskEntry) failed: rc=%d", result);
+        LOGE("ZygiskModule: RegisterNatives(ZygiskEntry) failed: rc=%d", result);
         log_and_clear_jni_exception(env, "RegisterNatives(ZygiskEntry) exception");
     }
     return success;
@@ -1337,7 +1337,7 @@ static jobject get_class_loader(JNIEnv *env, jclass clazz)
         return nullptr;
     }
     if (!classloader)
-        LOGE("ZygiskEntry.class.getClassLoader returned null");
+        LOGE("ZygiskModule: ZygiskEntry.class.getClassLoader returned null");
     return classloader;
 }
 
@@ -1369,7 +1369,7 @@ public:
         }
         if (status != COMPANION_ENABLED)
         {
-            LOGE("preAppSpecialize: allow-list lookup failed for %s",
+            LOGE("ZygiskModule: preAppSpecialize: allow-list lookup failed for %s",
                  process_name.c_str());
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
@@ -1378,14 +1378,14 @@ public:
         const char *abi = current_abi_dir();
         if (!abi)
         {
-            LOGE("preAppSpecialize: unsupported ABI");
+            LOGE("ZygiskModule: preAppSpecialize: unsupported ABI");
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
         const int module_dir_fd = api->getModuleDir();
         if (module_dir_fd < 0)
         {
-            LOGE("preAppSpecialize: getModuleDir failed");
+            LOGE("ZygiskModule: preAppSpecialize: getModuleDir failed");
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
@@ -1396,7 +1396,7 @@ public:
                               dex_list_text) ||
             !parse_dex_list(dex_list_text, dex_names))
         {
-            LOGE("preAppSpecialize: failed to prepare payload metadata for %s",
+            LOGE("ZygiskModule: preAppSpecialize: failed to prepare payload metadata for %s",
                  process_name.c_str());
             close(module_dir_fd);
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
@@ -1414,7 +1414,7 @@ public:
             if (!sname.empty())
             {
                 telegram_socket_name = sname;
-                LOGI("preAppSpecialize: retained Telegram root companion socket for %s",
+                LOGI("ZygiskModule: preAppSpecialize: retained Telegram root companion socket for %s",
                      process_name.c_str());
             }
         }
@@ -1423,7 +1423,7 @@ public:
         app_gid = args->gid;
         retained_module_dir_fd = module_dir_fd;
         enabled = true;
-        LOGI("preAppSpecialize: enabled %s (uid=%d), deferred APK + %zu DEX copies",
+        LOGI("ZygiskModule: preAppSpecialize: enabled %s (uid=%d), deferred APK + %zu DEX copies",
              process_name.c_str(), args->uid, dex_names.size());
     }
 
@@ -1433,14 +1433,14 @@ public:
             return;
         if (module_classloader)
         {
-            LOGW("postAppSpecialize: module class loader is already initialized");
+            LOGW("ZygiskModule: postAppSpecialize: module class loader is already initialized");
             return;
         }
-        LOGI("postAppSpecialize: copying and loading WeKit payload");
+        LOGI("ZygiskModule: postAppSpecialize: copying and loading WeKit payload");
 
         if (retained_module_dir_fd < 0)
         {
-            LOGE("postAppSpecialize: module directory fd is unavailable");
+            LOGE("ZygiskModule: postAppSpecialize: module directory fd is unavailable");
             return;
         }
         const std::string files_dir = data_dir + "/files";
@@ -1454,7 +1454,7 @@ public:
         if (!copy_module_file(retained_module_dir_fd, payload_base + "wekit.apk",
                               apk_path, app_uid, app_gid, MAX_PAYLOAD_FILE_BYTES))
         {
-            LOGE("postAppSpecialize: failed to copy WeKit APK payload for %s",
+            LOGE("ZygiskModule: postAppSpecialize: failed to copy WeKit APK payload for %s",
                  process_name.c_str());
             return;
         }
@@ -1467,7 +1467,7 @@ public:
                                   dex_destination, app_uid, app_gid,
                                   MAX_DEX_FILE_BYTES))
             {
-                LOGE("postAppSpecialize: failed to copy WeKit DEX payload %s",
+                LOGE("ZygiskModule: postAppSpecialize: failed to copy WeKit DEX payload %s",
                      dex_name.c_str());
                 dex_paths.clear();
                 return;
@@ -1480,7 +1480,7 @@ public:
         jobject classloader = nullptr;
         if (!load_copied_dex(env, dex_paths, classloader))
         {
-            LOGE("postAppSpecialize: InMemoryDexClassLoader creation failed");
+            LOGE("ZygiskModule: postAppSpecialize: InMemoryDexClassLoader creation failed");
             return;
         }
 
@@ -1488,7 +1488,7 @@ public:
             env, classloader, "dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskEntry");
         if (!entry)
         {
-            LOGE("postAppSpecialize: ZygiskEntry class not found");
+            LOGE("ZygiskModule: postAppSpecialize: ZygiskEntry class not found");
             env->DeleteGlobalRef(classloader);
             return;
         }
@@ -1505,7 +1505,7 @@ public:
         }
         if (!register_entry_natives(env, entry))
         {
-            LOGE("postAppSpecialize: failed to register ZygiskEntry bootstrap JNI");
+            LOGE("ZygiskModule: postAppSpecialize: failed to register ZygiskEntry bootstrap JNI");
             env->DeleteLocalRef(entry);
             env->DeleteGlobalRef(classloader);
             return;
@@ -1534,11 +1534,11 @@ public:
         {
             env->ExceptionDescribe();
             env->ExceptionClear();
-            LOGE("postAppSpecialize: ZygiskEntry.init failed");
+            LOGE("ZygiskModule: postAppSpecialize: ZygiskEntry.init failed");
         }
         else
         {
-            LOGI("postAppSpecialize: ZygiskEntry.init completed");
+            LOGI("ZygiskModule: postAppSpecialize: ZygiskEntry.init completed");
         }
         env->DeleteLocalRef(process);
         env->DeleteLocalRef(data);
@@ -1794,7 +1794,7 @@ extern "C"
         // trusted before any hook bridge class is resolved.
         if (!art_hook_init(env))
         {
-            LOGE("ZygiskEntry.nativeInitialize: art_hook_init failed");
+            LOGE("ZygiskModule: ZygiskEntry.nativeInitialize: art_hook_init failed");
             return JNI_FALSE;
         }
         jobject classloader = get_class_loader(env, entry);
@@ -1803,13 +1803,13 @@ extern "C"
         const bool trusted = art_trust_class_loader(env, classloader);
         if (!trusted)
         {
-            LOGE("ZygiskEntry.nativeInitialize: failed to trust ZygiskEntry loader");
+            LOGE("ZygiskModule: ZygiskEntry.nativeInitialize: failed to trust ZygiskEntry loader");
             env->DeleteLocalRef(classloader);
             return JNI_FALSE;
         }
         const bool registered = register_hook_bridge_natives(env, classloader);
         if (!registered)
-            LOGE("ZygiskEntry.nativeInitialize: failed to register ArtHookBridge");
+            LOGE("ZygiskModule: ZygiskEntry.nativeInitialize: failed to register ArtHookBridge");
         env->DeleteLocalRef(classloader);
         return registered ? JNI_TRUE : JNI_FALSE;
     }
@@ -1874,20 +1874,20 @@ extern "C"
     Java_dev_ujhhgtg_wekit_loader_entry_zygisk_ArtHookBridge_nativeHideLoadedModuleLibraries(
         JNIEnv * /*env*/, jclass /*clazz*/)
     {
-        LOGI("hideLoadedModuleLibraries: begin pid=%d library=libdexkit.so",
+        LOGI("SoHider: hideLoadedModuleLibraries: begin pid=%d library=libdexkit.so",
              getpid());
         const int dexkit = so_hide_path("libdexkit.so");
-        LOGI("hideLoadedModuleLibraries: complete pid=%d library=libdexkit.so result=%d",
+        LOGI("SoHider: hideLoadedModuleLibraries: complete pid=%d library=libdexkit.so result=%d",
              getpid(), dexkit);
-        LOGI("hideLoadedModuleLibraries: begin pid=%d library=libwekit_native.so",
+        LOGI("SoHider: hideLoadedModuleLibraries: begin pid=%d library=libwekit_native.so",
              getpid());
         const int wekit_native = so_hide_path("libwekit_native.so");
         LOGI(
             "hideLoadedModuleLibraries: complete pid=%d library=libwekit_native.so result=%d",
             getpid(), wekit_native);
-        LOGI("hideLoadedModuleLibraries: begin pid=%d library=libmmkv.so", getpid());
+        LOGI("SoHider: hideLoadedModuleLibraries: begin pid=%d library=libmmkv.so", getpid());
         const int mmkv = so_hide_path("libmmkv.so");
-        LOGI("hideLoadedModuleLibraries: complete pid=%d library=libmmkv.so result=%d",
+        LOGI("SoHider: hideLoadedModuleLibraries: complete pid=%d library=libmmkv.so result=%d",
              getpid(), mmkv);
         return dexkit >= 0 && wekit_native >= 0 && mmkv >= 0 ? JNI_TRUE : JNI_FALSE;
     }

@@ -34,6 +34,11 @@ object ForceTabletMode : SwitchFeature(), IResolveDex {
             usingEqStrings("loginAsOtherDeviceBtn")
         }
     }
+    private val methodCgiCheckLoginAsPad by dexMethod {
+        matcher {
+            usingEqStrings("MicroMsg.CgiCheckLoginAsPad", "/cgi-bin/micromsg-bin/checkloginaspad")
+        }
+    }
 
     override fun onEnable() {
         methodIsTablet.hookBefore {
@@ -54,6 +59,10 @@ object ForceTabletMode : SwitchFeature(), IResolveDex {
                 type = Button::class
             }.get()!! as Button
             btn.isVisible = true
+        }
+
+        methodCgiCheckLoginAsPad.hookBefore {
+            result = true
         }
     }
 
