@@ -1054,15 +1054,6 @@ fn export_zygisk_payload(apk: &Path, payload_dir: &Path, abi: &str) -> Result<()
     let abi_dir = payload_dir.join(abi);
     fs::create_dir_all(&abi_dir)?;
 
-    let apk_destination = abi_dir.join("wekit.apk");
-    fs::copy(apk, &apk_destination).with_context(|| {
-        format!(
-            "could not copy payload {} to {}",
-            apk.display(),
-            apk_destination.display()
-        )
-    })?;
-
     let input =
         fs::File::open(apk).with_context(|| format!("could not open APK {}", apk.display()))?;
     let mut archive = ZipArchive::new(input)
@@ -1088,18 +1079,14 @@ fn export_zygisk_payload(apk: &Path, payload_dir: &Path, abi: &str) -> Result<()
         }
     }
 
-    let mut dex_list = String::new();
-    for (_, name) in &dex_entries {
-        let mut entry = archive.by_name(name)?;
-        let destination = abi_dir.join(name);
-        let mut output = fs::File::create(&destination)
-            .with_context(|| format!("could not create {}", destination.display()))?;
-        std::io::copy(&mut entry, &mut output)
-            .with_context(|| format!("could not extract {name} from {}", apk.display()))?;
-        dex_list.push_str(name);
-        dex_list.push('\n');
-    }
-    fs::write(abi_dir.join("dex.list"), dex_list)?;
+    let apk_destination = abi_dir.join("wekit.apk");
+    fs::copy(apk, &apk_destination).with_context(|| {
+        format!(
+            "could not copy payload {} to {}",
+            apk.display(),
+            apk_destination.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -1312,7 +1299,7 @@ fn package_zygisk_module(
     for (abi, source) in resolve_zygisk_payload_apks(root, profile, explicit_apks)? {
         export_zygisk_payload(&source, &payload_dir, abi)?;
         println!(
-            "zygisk(package): embedded {} -> payload/{abi}/wekit.apk + classes*.dex",
+            "zygisk(package): embedded {} -> payload/{abi}/wekit.apk (DEX extracted during installation)",
             source.display()
         );
     }

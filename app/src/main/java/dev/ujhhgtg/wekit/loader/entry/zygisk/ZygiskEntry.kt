@@ -4,25 +4,30 @@ package dev.ujhhgtg.wekit.loader.entry.zygisk
 
 import android.annotation.SuppressLint
 import android.content.pm.ApplicationInfo
-import android.util.Log
 import androidx.annotation.Keep
+import dev.ujhhgtg.reflekt.utils.makeAccessible
 import dev.ujhhgtg.wekit.BuildConfig
 import dev.ujhhgtg.wekit.constants.PackageNames
+import dev.ujhhgtg.wekit.loader.abc.IHookBridge
 import dev.ujhhgtg.wekit.loader.entry.common.ModuleLoader
 import dev.ujhhgtg.wekit.loader.utils.NativeLoader
+import dev.ujhhgtg.wekit.utils.WeLogger
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Zygisk JVM entry point.
  *
- * Called from C++ postAppSpecialize via the FunBox-compatible shape:
+ * Called from C++ postAppSpecialize:
  *   ZygiskEntry.init(processName, dataDir, copiedApkPath)
  *
- * The C++ side has already:
+ * The C++ side has only:
  *   1. Copied the active module's APK and every classes*.dex payload into
- *      this app's data directory during preAppSpecialize.
- *   2. Loaded those copied DEX files through InMemoryDexClassLoader and
- *      registered the native methods used by ZygiskHookBridge.
+ *      this app's data directory during postAppSpecialize.
+ *   2. Loaded the copied DEX files through InMemoryDexClassLoader and called
+ *      this entry point.
+ *
+ * This Java entry then initializes its native hook runtime,
+ * trusts its own InMemoryDexClassLoader, and only then installs lifecycle hooks.
  */
 @Keep
 object ZygiskEntry {
@@ -32,7 +37,7 @@ object ZygiskEntry {
     private val moduleStarted = AtomicBoolean(false)
     private val finalClassLoaderHookInstalled = AtomicBoolean(false)
     private var loaderService: ZygiskLoaderService? = null
-    private var hookBridge: ZygiskHookBridge? = null
+    private var hookBridge: ArtHookBridge? = null
     private var hostDataDir: String = ""
     private var modulePath: String = ""
 
@@ -46,27 +51,30 @@ object ZygiskEntry {
     ) {
         val targetPackage = processName.substringBefore(':')
         if (!PackageNames.isWeChat(targetPackage)) {
-            Log.w(TAG, "ignoring unsupported Zygisk target: $targetPackage")
+            WeLogger.w(TAG, "ignoring unsupported Zygisk target: $targetPackage")
             return
         }
         synchronized(entryLock) {
             if (hookBridge != null) return
 
             try {
-                Log.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
+                WeLogger.i(TAG, "ZygiskEntry.init: process=$processName apk=$apkPath dataDir=$dataDir")
+                check(nativeInitialize()) {
+                    "failed to initialize ART hook runtime and trust ZygiskEntry loader"
+                }
                 NativeLoader.configureZygiskPayload(apkPath, dataDir)
                 val service = ZygiskLoaderService(
                     modulePath = apkPath,
                     versionName = BuildConfig.VERSION_NAME,
                     versionCode = BuildConfig.VERSION_CODE,
                 )
-                val bridge = ZygiskHookBridge()
+                val bridge = ArtHookBridge()
                 hostDataDir = dataDir
                 modulePath = apkPath
                 loaderService = service
                 hookBridge = bridge
 
-                // FunBox waits at LoadedApk.createAppFactory. The ClassLoader
+                // Waits at LoadedApk.createAppFactory. The ClassLoader
                 // parameter here is only AOSP's default loader; the final
                 // mClassLoader is selected by AppComponentFactory below.
                 val loadedApk = Class.forName("android.app.LoadedApk")
@@ -74,12 +82,12 @@ object ZygiskEntry {
                     "createAppFactory",
                     ApplicationInfo::class.java,
                     ClassLoader::class.java,
-                ).apply { isAccessible = true }
+                ).makeAccessible()
 
-                bridge.hookMethod(createAppFactory, object : dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback {
-                    override fun beforeHookedMember(param: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookParam) = Unit
+                bridge.hookMethod(createAppFactory, object : IHookBridge.IMemberHookCallback {
+                    override fun beforeHookedMember(param: IHookBridge.IMemberHookParam) = Unit
 
-                    override fun afterHookedMember(param: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookParam) {
+                    override fun afterHookedMember(param: IHookBridge.IMemberHookParam) {
                         if (param.throwable != null) return
                         val appInfo = param.args.getOrNull(0) as? ApplicationInfo ?: return
                         if (appInfo.packageName != targetPackage) return
@@ -96,13 +104,16 @@ object ZygiskEntry {
                 modulePath = ""
                 moduleStarted.set(false)
                 finalClassLoaderHookInstalled.set(false)
-                Log.e(TAG, "ZygiskEntry.init failed", t)
+                WeLogger.e(TAG, "ZygiskEntry.init failed", t)
             }
         }
     }
 
+    @JvmStatic
+    private external fun nativeInitialize(): Boolean
+
     private fun installFinalClassLoaderHook(
-        bridge: ZygiskHookBridge,
+        bridge: ArtHookBridge,
         appComponentFactory: Any,
         targetPackage: String,
     ) {
@@ -112,12 +123,12 @@ object ZygiskEntry {
                 "instantiateClassLoader",
                 ClassLoader::class.java,
                 ApplicationInfo::class.java,
-            ).apply { isAccessible = true }
+            ).makeAccessible()
 
-            bridge.hookMethod(instantiateClassLoader, object : dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback {
-                override fun beforeHookedMember(param: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookParam) = Unit
+            bridge.hookMethod(instantiateClassLoader, object : IHookBridge.IMemberHookCallback {
+                override fun beforeHookedMember(param: IHookBridge.IMemberHookParam) = Unit
 
-                override fun afterHookedMember(param: dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookParam) {
+                override fun afterHookedMember(param: IHookBridge.IMemberHookParam) {
                     if (param.throwable != null) return
                     val appInfo = param.args.getOrNull(1) as? ApplicationInfo ?: return
                     if (appInfo.packageName != targetPackage) return
@@ -125,10 +136,10 @@ object ZygiskEntry {
                     startModule(finalClassLoader)
                 }
             }, priority = 10000)
-            Log.i(TAG, "hooked AppComponentFactory.instantiateClassLoader on ${appComponentFactory.javaClass.name}")
+            WeLogger.i(TAG, "hooked AppComponentFactory.instantiateClassLoader on ${appComponentFactory.javaClass.name}")
         } catch (t: Throwable) {
             finalClassLoaderHookInstalled.set(false)
-            Log.e(TAG, "failed to hook AppComponentFactory.instantiateClassLoader", t)
+            WeLogger.e(TAG, "failed to hook AppComponentFactory.instantiateClassLoader", t)
         }
     }
 
@@ -147,16 +158,16 @@ object ZygiskEntry {
                 allowDynamicLoad = false,
             )
         } catch (t: Throwable) {
-            Log.e(TAG, "failed to start WeKit module", t)
+            WeLogger.e(TAG, "failed to start WeKit module", t)
             false
         }
         if (started) {
-            Log.i(TAG, "WeKit module started with host ClassLoader=$hostClassLoader")
+            WeLogger.i(TAG, "WeKit module started with host ClassLoader=$hostClassLoader")
         } else {
             // ModuleLoader deliberately leaves its guard unset on failure.
             // Do the same here so a later app lifecycle entry can retry.
             moduleStarted.set(false)
-            Log.w(TAG, "WeKit module startup failed; retry remains available")
+            WeLogger.w(TAG, "WeKit module startup failed; retry remains available")
         }
     }
 

@@ -1,4 +1,10 @@
-import { exec, hasKernelSuBridge, shellQuote } from "./bridge.js";
+import {
+  exec,
+  getPackagesInfo,
+  hasKernelSuBridge,
+  listPackages,
+  shellQuote,
+} from "./bridge.js";
 
 const $ = (selector) => document.querySelector(selector);
 const targetList = $("#target-list");
@@ -17,8 +23,13 @@ let lastCommandFailure = "";
 
 function configScriptPath() {
   try {
-    const path = decodeURIComponent(new URL("../config.sh", document.baseURI).pathname);
-    if (path.startsWith("/data/adb/modules/") || path.startsWith("/data/adb/modules_update/")) {
+    const path = decodeURIComponent(
+      new URL("../config.sh", document.baseURI).pathname,
+    );
+    if (
+      path.startsWith("/data/adb/modules/") ||
+      path.startsWith("/data/adb/modules_update/")
+    ) {
       return path;
     }
   } catch (_) {
@@ -27,33 +38,115 @@ function configScriptPath() {
   return "/data/adb/modules/wekit/config.sh";
 }
 
-async function configCommand(command, ...args) {
-  const commandLine = ["sh", shellQuote(configScriptPath()), shellQuote(command), ...args.map(shellQuote)].join(" ");
+async function runCheckedCommand(commandLine, operation) {
   let result;
   try {
     result = await exec(commandLine);
   } catch (error) {
     lastCommandFailure = `$ ${commandLine}\nbridge error: ${error?.stack || error}`;
-    console.error("[WeKit WebUI] command bridge failure", { commandLine, error });
+    console.error("[WeKit WebUI] command bridge failure", {
+      commandLine,
+      error,
+    });
     throw error;
   }
 
   const exitCodeValue = Number(result.errno);
   const exitCode = Number.isFinite(exitCodeValue) ? exitCodeValue : -1;
-  console.info("[WeKit WebUI] command result", { commandLine, exitCode, stdout: result.stdout, stderr: result.stderr });
+  console.info("[WeKit WebUI] command result", {
+    commandLine,
+    exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
   if (exitCode !== 0) {
     const stderr = result.stderr.trim();
     const stdout = result.stdout.trim();
-    const firstDetail = (stderr || stdout).split("\n")[0] || "命令没有返回错误文本";
+    const firstDetail =
+      (stderr || stdout).split("\n")[0] || "命令没有返回错误文本";
     lastCommandFailure = [
       `$ ${commandLine}`,
       `exit: ${exitCode}`,
       `stdout:\n${stdout || "<empty>"}`,
       `stderr:\n${stderr || "<empty>"}`,
     ].join("\n");
-    throw new Error(`${command} 失败 (exit ${exitCode}): ${firstDetail}`);
+    throw new Error(`${operation} 失败 (exit ${exitCode}): ${firstDetail}`);
   }
   return result.stdout;
+}
+
+async function configCommand(command, ...args) {
+  const commandLine = [
+    "sh",
+    shellQuote(configScriptPath()),
+    shellQuote(command),
+    ...args.map(shellQuote),
+  ].join(" ");
+  return runCheckedCommand(commandLine, command);
+}
+
+const WECHAT_PREFIX = "com.tencent.mm";
+const UID_PER_ANDROID_USER = 100000;
+
+function isWeChatPackage(packageName) {
+  return (
+    typeof packageName === "string" && packageName.startsWith(WECHAT_PREFIX)
+  );
+}
+
+function uidToUserId(uid) {
+  const numericUid = Number(uid);
+  if (!Number.isSafeInteger(numericUid) || numericUid < 0) return null;
+  return Math.floor(numericUid / UID_PER_ANDROID_USER);
+}
+
+async function scanWeChatTargets() {
+  if (
+    typeof window.ksu?.listPackages !== "function" ||
+    typeof window.ksu?.getPackagesInfo !== "function"
+  ) {
+    throw new Error("KernelSU listPackages/getPackagesInfo API 不可用");
+  }
+
+  const listedPackages = await listPackages("all");
+  const candidates = listedPackages.filter(isWeChatPackage);
+  if (candidates.length === 0) return [];
+
+  const packageInfo = await getPackagesInfo(candidates);
+  const targets = new Map();
+  for (let index = 0; index < candidates.length; index += 1) {
+    const info = packageInfo[index];
+    const packageName = isWeChatPackage(info?.packageName)
+      ? info.packageName
+      : candidates[index];
+    const userId = uidToUserId(info?.uid);
+    if (packageName && userId !== null) {
+      targets.set(`${userId}\t${packageName}`, { userId, packageName });
+    }
+  }
+  if (targets.size === 0) {
+    throw new Error("KernelSU getPackagesInfo 未返回可用 uid");
+  }
+  return [...targets.values()].sort(
+    (left, right) =>
+      left.userId - right.userId ||
+      left.packageName.localeCompare(right.packageName),
+  );
+}
+
+async function replaceTargets(targets) {
+  const payload = targets
+    .map((entry) => `${entry.userId}\t${entry.packageName}`)
+    .join("\n");
+  const commandLine = [
+    "printf %s",
+    shellQuote(payload),
+    "|",
+    "sh",
+    shellQuote(configScriptPath()),
+    "replace-stdin",
+  ].join(" ");
+  return runCheckedCommand(commandLine, "replace");
 }
 
 function showToast(message, isError = false) {
@@ -61,7 +154,10 @@ function showToast(message, isError = false) {
   toast.textContent = message;
   toast.classList.toggle("error", isError);
   toast.classList.add("visible");
-  toastTimer = setTimeout(() => toast.classList.remove("visible"), isError ? 8000 : 2800);
+  toastTimer = setTimeout(
+    () => toast.classList.remove("visible"),
+    isError ? 8000 : 2800,
+  );
 }
 
 async function loadDeviceLog() {
@@ -73,14 +169,27 @@ async function loadDeviceLog() {
     const result = await exec(commandLine);
     const exitCodeValue = Number(result.errno);
     const exitCode = Number.isFinite(exitCodeValue) ? exitCodeValue : -1;
-    const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+    const output = [result.stdout.trim(), result.stderr.trim()]
+      .filter(Boolean)
+      .join("\n");
     const sections = [];
-    if (lastCommandFailure) sections.push(`=== 最近一次 WebUI 命令 ===\n${lastCommandFailure}`);
+    if (lastCommandFailure)
+      sections.push(`=== 最近一次 WebUI 命令 ===\n${lastCommandFailure}`);
     sections.push(`=== 设备日志 ===\n${output || `<empty; exit ${exitCode}>`}`);
     deviceLog.textContent = sections.join("\n\n");
-    console.info("[WeKit WebUI] device log result", { commandLine, exitCode, stdout: result.stdout, stderr: result.stderr });
+    console.info("[WeKit WebUI] device log result", {
+      commandLine,
+      exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    });
   } catch (error) {
-    deviceLog.textContent = [lastCommandFailure, `无法读取设备日志: ${error?.stack || error}`].filter(Boolean).join("\n\n");
+    deviceLog.textContent = [
+      lastCommandFailure,
+      `无法读取设备日志: ${error?.stack || error}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     console.error("[WeKit WebUI] cannot read device log", error);
   } finally {
     refreshLogButton.disabled = false;
@@ -97,14 +206,21 @@ async function showCommandFailure(error, fallback) {
 }
 
 function parseTargets(stdout) {
-  return stdout.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-    const [userId, packageName, enabled] = line.split("\t");
-    return { userId, packageName, enabled };
-  }).filter((entry) =>
-    /^\d+$/.test(entry.userId) &&
-    entry.packageName &&
-    (entry.enabled === "0" || entry.enabled === "1")
-  ).map((entry) => ({ ...entry, enabled: entry.enabled === "1" }));
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [userId, packageName, enabled] = line.split("\t");
+      return { userId, packageName, enabled };
+    })
+    .filter(
+      (entry) =>
+        /^\d+$/.test(entry.userId) &&
+        entry.packageName &&
+        (entry.enabled === "0" || entry.enabled === "1"),
+    )
+    .map((entry) => ({ ...entry, enabled: entry.enabled === "1" }));
 }
 
 function createTargetRow(entry) {
@@ -129,7 +245,10 @@ function createTargetRow(entry) {
   toggle.type = "checkbox";
   toggle.checked = entry.enabled;
   toggle.setAttribute("role", "switch");
-  toggle.setAttribute("aria-label", entry.packageName + "，Android 用户 " + entry.userId);
+  toggle.setAttribute(
+    "aria-label",
+    entry.packageName + "，Android 用户 " + entry.userId,
+  );
   const track = document.createElement("span");
   track.className = "switch-track";
   label.append(toggle, track);
@@ -138,7 +257,12 @@ function createTargetRow(entry) {
     const requested = toggle.checked;
     toggle.disabled = true;
     try {
-      await configCommand("set", entry.userId, entry.packageName, requested ? "1" : "0");
+      await configCommand(
+        "set",
+        entry.userId,
+        entry.packageName,
+        requested ? "1" : "0",
+      );
       label.title = requested ? "已启用" : "已关闭";
       showToast(requested ? "已启用，下次启动生效" : "已关闭，下次启动生效");
       await loadTargets();
@@ -158,7 +282,9 @@ function renderTargets(targets) {
   targetList.replaceChildren(...targets.map(createTargetRow));
   targetList.hidden = targets.length === 0;
   emptyState.hidden = targets.length !== 0;
-  enabledCount.textContent = String(targets.filter((entry) => entry.enabled).length);
+  enabledCount.textContent = String(
+    targets.filter((entry) => entry.enabled).length,
+  );
 }
 
 async function loadTargets() {
@@ -180,7 +306,8 @@ async function loadTargets() {
 async function refreshTargets() {
   refreshTargetsButton.disabled = true;
   try {
-    await configCommand("refresh");
+    const targets = await scanWeChatTargets();
+    await replaceTargets(targets);
     if (await loadTargets()) {
       showToast("已重新扫描微信应用");
     }
@@ -201,5 +328,5 @@ if (!hasKernelSuBridge()) {
   targetLoading.textContent = "请在 KernelSU 管理器中打开此页面";
   refreshTargetsButton.disabled = true;
 } else {
-  loadTargets();
+  refreshTargets();
 }

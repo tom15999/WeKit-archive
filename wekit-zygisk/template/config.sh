@@ -13,6 +13,14 @@ LOCK_RETRIES=10
 # packageName.startsWith("com.tencent.mm").
 TARGET_PACKAGE_PREFIX=com.tencent.mm
 
+# KernelSU WebUI commands can run with a sparse environment. Use Android's
+# canonical tool paths before invoking cmd/pm/app_process helpers.
+export PATH=/system/bin:/system/xbin:/vendor/bin:/product/bin:/apex/com.android.runtime/bin:$PATH
+export ANDROID_DATA=/data
+export ANDROID_ROOT=/system
+export BOOTCLASSPATH=${BOOTCLASSPATH:-}
+export SYSTEMSERVERCLASSPATH=${SYSTEMSERVERCLASSPATH:-}
+
 # Every temporary replacement file is published with rename(2). Set this before
 # any redirection so it is private even during construction.
 umask 077
@@ -36,6 +44,19 @@ log_event() {
   [ -n "$wekit_log_timestamp" ] || wekit_log_timestamp=unknown-time
   printf '%s [%s] %s\n' "$wekit_log_timestamp" "$wekit_log_level" "$*" >> "$LOG_FILE" 2>/dev/null || true
   chmod 600 "$LOG_FILE" 2>/dev/null || true
+}
+
+command_path() {
+  command -v "$1" 2>/dev/null || printf '<not-found>'
+}
+
+summarize_file() {
+  wekit_summary_file=$1
+  if [ -s "$wekit_summary_file" ]; then
+    head -c 2048 "$wekit_summary_file" 2>/dev/null | tr '\n' ' '
+  else
+    printf '<empty>'
+  fi
 }
 
 report_error() {
@@ -128,11 +149,19 @@ list_user_ids() {
     users=$(sed -n 's/.*UserInfo{\([0-9][0-9]*\):.*/\1/p' "$wekit_users_output")
   else
     wekit_users_status=$?
-    wekit_users_message=$(head -c 1024 "$wekit_users_error" 2>/dev/null | tr '\n' ' ')
-    log_event WARN "cmd user list failed status=$wekit_users_status stderr=$wekit_users_message"
+    wekit_users_stdout=$(summarize_file "$wekit_users_output")
+    wekit_users_message=$(summarize_file "$wekit_users_error")
+    log_event WARN "cmd user list failed status=$wekit_users_status cmd=$(command_path cmd) path=$PATH stdout=$wekit_users_stdout stderr=$wekit_users_message"
     users=
   fi
   rm -f "$wekit_users_output" "$wekit_users_error"
+  if [ -z "$users" ] && [ -d /data/system/users ]; then
+    users=$(find /data/system/users -maxdepth 1 -type d 2>/dev/null |
+      sed -n 's#^.*/\([0-9][0-9]*\)$#\1#p')
+    if [ -n "$users" ]; then
+      log_event INFO "discovered Android users from /data/system/users: $(printf '%s' "$users" | tr '\n' ',')"
+    fi
+  fi
   if [ -n "$users" ]; then
     log_event INFO "discovered Android users: $(printf '%s' "$users" | tr '\n' ',')"
     printf '%s\n' "$users"
@@ -180,8 +209,9 @@ list_installed_packages_for_user() {
     rm -f "$wekit_packages_output" "$wekit_packages_error"
     return 0
   fi
-  wekit_cmd_error=$(head -c 1024 "$wekit_packages_error" 2>/dev/null | tr '\n' ' ')
-  log_event WARN "package scan user=$user_id command=cmd status=$wekit_cmd_status stderr=$wekit_cmd_error"
+  wekit_cmd_stdout=$(summarize_file "$wekit_packages_output")
+  wekit_cmd_error=$(summarize_file "$wekit_packages_error")
+  log_event WARN "package scan user=$user_id command=cmd status=$wekit_cmd_status cmd=$(command_path cmd) stdout=$wekit_cmd_stdout stderr=$wekit_cmd_error"
 
   pm list packages --user "$user_id" > "$wekit_packages_output" 2> "$wekit_packages_error"
   wekit_pm_status=$?
@@ -192,9 +222,11 @@ list_installed_packages_for_user() {
     rm -f "$wekit_packages_output" "$wekit_packages_error"
     return 0
   fi
-  wekit_pm_error=$(head -c 1024 "$wekit_packages_error" 2>/dev/null | tr '\n' ' ')
+  wekit_pm_stdout=$(summarize_file "$wekit_packages_output")
+  wekit_pm_error=$(summarize_file "$wekit_packages_error")
+
   rm -f "$wekit_packages_output" "$wekit_packages_error"
-  report_warning "package scan failed for Android user $user_id: cmd=$wekit_cmd_status ($wekit_cmd_error), pm=$wekit_pm_status ($wekit_pm_error)"
+  report_warning "package scan failed for Android user $user_id: cmd=$wekit_cmd_status stdout=[$wekit_cmd_stdout] stderr=[$wekit_cmd_error], pm=$wekit_pm_status stdout=[$wekit_pm_stdout] stderr=[$wekit_pm_error]"
   return 1
 }
 
@@ -249,17 +281,13 @@ collect_wechat_targets_locked() {
   return 0
 }
 
-# Refresh membership from the package manager while preserving each surviving
-# target's explicit toggle. Every newly discovered package starts disabled.
-refresh_targets_locked() {
+# Publish a package scan while preserving each surviving target's explicit
+# toggle. Every newly discovered package starts disabled. WebUI supplies the
+# scan through KernelSU's listPackages/getPackagesInfo APIs.
+publish_scan_locked() {
+  scan_file=$1
   ensure_state_dir || return 1
-  scan_file=$STATE_DIR/.injection-targets.scan.$$
   temp_file=$TARGETS_FILE.tmp.$$
-  collect_wechat_targets_locked "$scan_file" || {
-    rm -f "$scan_file"
-    return 1
-  }
-
   previous_file=$TARGETS_FILE
   [ -f "$previous_file" ] || previous_file=/dev/null
   (
@@ -280,7 +308,6 @@ refresh_targets_locked() {
     ' "$previous_file" "$scan_file"
   ) > "$temp_file"
   status=$?
-  rm -f "$scan_file"
   if [ "$status" -ne 0 ]; then
     rm -f "$temp_file"
     return "$status"
@@ -299,9 +326,49 @@ refresh_targets_locked() {
   log_event INFO "target refresh published targets=$wekit_target_count file=$TARGETS_FILE"
 }
 
+refresh_targets_locked() {
+  ensure_state_dir || return 1
+  scan_file=$STATE_DIR/.injection-targets.scan.$$
+  collect_wechat_targets_locked "$scan_file" || {
+    rm -f "$scan_file"
+    return 1
+  }
+  publish_scan_locked "$scan_file"
+  status=$?
+  rm -f "$scan_file"
+  return "$status"
+}
+
+# KernelSU WebUI passes userId<TAB>packageName rows on stdin. Validate and
+# normalize them here before the same atomic publish path used by refresh.
+replace_targets_from_stdin_locked() {
+  ensure_state_dir || return 1
+  scan_file=$STATE_DIR/.injection-targets.stdin.$$
+  awk -F '\t' -v OFS='\t' -v prefix="$TARGET_PACKAGE_PREFIX" '
+    NF == 2 && $1 ~ /^[0-9]+$/ &&
+      $2 ~ /^[A-Za-z0-9._]+$/ && index($2, prefix) == 1 {
+      print $1, $2
+    }
+  ' > "$scan_file" || {
+    rm -f "$scan_file"
+    report_error "cannot parse WebUI package scan"
+    return 1
+  }
+  publish_scan_locked "$scan_file"
+  status=$?
+  rm -f "$scan_file"
+  return "$status"
+}
+
 ensure_initialized_locked() {
   if [ ! -f "$TARGETS_FILE" ]; then
-    refresh_targets_locked
+    ensure_state_dir || return 1
+    temp_file=$TARGETS_FILE.tmp.$$
+    write_default_header > "$temp_file" || {
+      rm -f "$temp_file"
+      return 1
+    }
+    chmod 600 "$temp_file" && mv -f "$temp_file" "$TARGETS_FILE"
   fi
 }
 
@@ -321,6 +388,10 @@ list_targets() {
 
 refresh_targets() {
   run_with_targets_lock refresh_targets_locked
+}
+
+replace_targets_from_stdin() {
+  run_with_targets_lock replace_targets_from_stdin_locked
 }
 
 set_enabled_locked() {
@@ -392,6 +463,7 @@ read_log() {
 case "$1" in
   list) run_logged_command list list_targets ;;
   refresh) run_logged_command refresh refresh_targets ;;
+  replace-stdin) run_logged_command replace replace_targets_from_stdin ;;
   set) run_logged_command "set user=$2 package=$3 enabled=$4" set_enabled "$2" "$3" "$4" ;;
   log) read_log ;;
   *)

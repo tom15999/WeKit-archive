@@ -1,6 +1,7 @@
 package dev.ujhhgtg.wekit.loader.entry.zygisk
 
 import androidx.annotation.Keep
+import dalvik.system.DexFile
 import dev.ujhhgtg.wekit.loader.abc.IHookBridge
 import dev.ujhhgtg.wekit.utils.WeLogger
 import java.lang.reflect.Constructor
@@ -20,9 +21,9 @@ import java.util.concurrent.atomic.AtomicLong
  * Thread-safe: ConcurrentHashMap + CopyOnWriteArrayList.
  */
 @Keep
-internal object WekitHookBridgeRuntime {
+internal object ArtHookBridgeRuntime {
 
-    private const val TAG = "WekitHookBridgeRuntime"
+    private const val TAG = "ArtHookBridgeRuntime"
 
     // ── Internal types ────────────────────────────────────────────────────────
 
@@ -39,6 +40,8 @@ internal object WekitHookBridgeRuntime {
     internal class HookEntry(
         val member: Member,
         val backupMethod: Method,   // DexMaker-generated backup; ArtMethod holds original code
+        @Suppress("unused")
+        val dexFile: DexFile,
     ) {
         val callbacks: CopyOnWriteArrayList<PrioritizedCallback> = CopyOnWriteArrayList()
     }
@@ -148,9 +151,9 @@ internal object WekitHookBridgeRuntime {
 
     // ── Registration ──────────────────────────────────────────────────────────
 
-    fun register(member: Member, backup: Method): Long {
+    fun register(member: Member, backup: Method, dexFile: DexFile): Long {
         val id = hookIdSeq.incrementAndGet()
-        hooks[id] = HookEntry(member, backup)
+        hooks[id] = HookEntry(member, backup, dexFile)
         memberToHookId[member] = id
         return id
     }
@@ -177,7 +180,7 @@ internal object WekitHookBridgeRuntime {
         priority: Int,
     ): PrioritizedCallback {
         val entry = requireNotNull(hooks[hookId]) {
-            "WekitHookBridgeRuntime: no entry for hookId=$hookId"
+            "$TAG: no entry for hookId=$hookId"
         }
         val pc = PrioritizedCallback(callback, priority)
         insertCallback(entry.callbacks, pc)
@@ -230,7 +233,7 @@ internal object WekitHookBridgeRuntime {
     @JvmStatic
     fun dispatch(hookId: Long, thisObj: Any?, args: Array<Any?>): Any? {
         val entry = hooks[hookId]
-            ?: throw IllegalStateException("WekitHookBridgeRuntime: no entry for hookId=$hookId")
+            ?: throw IllegalStateException("$TAG: no entry for hookId=$hookId")
         val param = MutableHookParam(entry.member, thisObj, args)
 
         // ── before callbacks ──────────────────────────────────────────────────
@@ -306,7 +309,7 @@ internal object WekitHookBridgeRuntime {
         val id = memberToHookId[member]
         val backup: Method = (if (id != null) hooks[id]?.backupMethod else null)
             ?: throw IllegalArgumentException(
-                "WekitHookBridgeRuntime: member is not hooked: $member"
+                "$TAG: member is not hooked: $member"
             )
         backup.isAccessible = true
         return try {

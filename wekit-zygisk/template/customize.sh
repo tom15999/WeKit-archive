@@ -67,6 +67,7 @@ extract "$ZIPFILE" 'webroot/index.html'       "$MODPATH"
 extract "$ZIPFILE" 'webroot/css/app.css'      "$MODPATH"
 extract "$ZIPFILE" 'webroot/js/bridge.js'     "$MODPATH"
 extract "$ZIPFILE" 'webroot/js/app.js'        "$MODPATH"
+extract "$ZIPFILE" 'webroot/js/kernelsu.js'   "$MODPATH"
 mv "$TMPDIR/sepolicy.rule" "$MODPATH"
 
 HAS32BIT=false
@@ -93,31 +94,72 @@ else
   abort "! Unsupported platform: $ARCH"
 fi
 
-# Extract the APK and every DEX entry required by the FunBox-style
-# InMemoryDexClassLoader bootstrap. Both ABI payloads are retained on arm64
-# devices because a 32-bit WeChat process can still be specialized there.
+# Extract each APK, then derive the DEX payload required by the FunBox-style
+# InMemoryDexClassLoader bootstrap. Keeping DEX only inside the APK avoids
+# storing the same bytes twice in the module ZIP.
+extract_payload_dex() {
+  payload_apk=$1
+  installed_payload_dir=$2
+
+  # A hot update may replace an APK with fewer DEX files. Remove all derived
+  # files first so a stale classesN.dex cannot remain loadable.
+  rm -f "$installed_payload_dir"/classes*.dex "$installed_payload_dir/dex.list"
+  unzip -o "$payload_apk" 'classes*.dex' -d "$installed_payload_dir" >&2 ||
+    abort "! Unable to extract DEX payload from $payload_apk"
+
+  dex_max=0
+  for dex_path in "$installed_payload_dir"/classes*.dex
+  do
+    [ -f "$dex_path" ] || continue
+    dex_name=${dex_path##*/}
+    case "$dex_name" in
+      classes.dex)
+        dex_number=1
+        ;;
+      classes[0-9]*.dex)
+        dex_number=${dex_name#classes}
+        dex_number=${dex_number%.dex}
+        case "$dex_number" in
+          ''|*[!0-9]*|0*|1) abort "! Invalid DEX payload entry: $dex_name" ;;
+        esac
+        ;;
+      *)
+        abort "! Invalid DEX payload entry: $dex_name"
+        ;;
+    esac
+    if [ "$dex_number" -gt "$dex_max" ]; then
+      dex_max=$dex_number
+    fi
+  done
+
+  [ "$dex_max" -ge 1 ] || abort "! APK does not contain classes.dex: $payload_apk"
+  : > "$installed_payload_dir/dex.list" ||
+    abort "! Unable to create DEX list for $payload_apk"
+  dex_number=1
+  while [ "$dex_number" -le "$dex_max" ]
+  do
+    if [ "$dex_number" -eq 1 ]; then
+      dex_name=classes.dex
+    else
+      dex_name="classes$dex_number.dex"
+    fi
+    [ -f "$installed_payload_dir/$dex_name" ] ||
+      abort "! APK has a non-contiguous classes*.dex sequence: $payload_apk"
+    printf '%s\n' "$dex_name" >> "$installed_payload_dir/dex.list" ||
+      abort "! Unable to write DEX list for $payload_apk"
+    dex_number=$((dex_number + 1))
+  done
+}
+
+# Both ABI payloads are retained on arm64 devices because a 32-bit WeChat
+# process can still be specialized there.
 ui_print "- Extracting WeKit payload"
 mkdir -p "$MODPATH/payload"
 for abi in arm64-v8a armeabi-v7a
 do
   payload_dir="payload/$abi"
   extract "$ZIPFILE" "$payload_dir/wekit.apk" "$MODPATH"
-  extract "$ZIPFILE" "$payload_dir/dex.list" "$MODPATH"
-  while IFS= read -r dex_name || [ -n "$dex_name" ]
-  do
-    case "$dex_name" in
-      classes.dex) ;;
-      classes[0-9]*.dex)
-        dex_index=${dex_name#classes}
-        dex_index=${dex_index%.dex}
-        case "$dex_index" in
-          ''|*[!0-9]*) abort "! Invalid DEX payload entry: $dex_name" ;;
-        esac
-        ;;
-      *) abort "! Invalid DEX payload entry: $dex_name" ;;
-    esac
-    extract "$ZIPFILE" "$payload_dir/$dex_name" "$MODPATH"
-  done < "$MODPATH/$payload_dir/dex.list"
+  extract_payload_dex "$MODPATH/$payload_dir/wekit.apk" "$MODPATH/$payload_dir"
   ui_print "  WeKit payload installed to $MODPATH/$payload_dir"
 done
 

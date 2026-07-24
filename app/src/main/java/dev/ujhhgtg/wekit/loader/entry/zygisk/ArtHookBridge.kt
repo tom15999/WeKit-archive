@@ -8,9 +8,20 @@ import com.android.dx.DexMaker
 import com.android.dx.FieldId
 import com.android.dx.MethodId
 import com.android.dx.TypeId
+import dalvik.system.DexFile
+import dev.ujhhgtg.reflekt.utils.isStatic
+import dev.ujhhgtg.wekit.constants.PackageNames
 import dev.ujhhgtg.wekit.loader.abc.IHookBridge
 import dev.ujhhgtg.wekit.loader.abc.IHookBridge.IMemberHookCallback
 import dev.ujhhgtg.wekit.loader.abc.IHookBridge.MemberUnhookHandle
+import dev.ujhhgtg.wekit.utils.reflection.BBool
+import dev.ujhhgtg.wekit.utils.reflection.BByte
+import dev.ujhhgtg.wekit.utils.reflection.BChar
+import dev.ujhhgtg.wekit.utils.reflection.BDouble
+import dev.ujhhgtg.wekit.utils.reflection.BFloat
+import dev.ujhhgtg.wekit.utils.reflection.BInt
+import dev.ujhhgtg.wekit.utils.reflection.BLong
+import dev.ujhhgtg.wekit.utils.reflection.BShort
 import dev.ujhhgtg.wekit.utils.reflection.bool
 import dev.ujhhgtg.wekit.utils.reflection.byte
 import dev.ujhhgtg.wekit.utils.reflection.char
@@ -27,6 +38,7 @@ import java.lang.reflect.Member
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -34,11 +46,10 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * For each hooked method, DexMaker generates a pair of methods preserving the
  * target's static/instance calling convention. Reference parameters and
- * return values are represented as Object, matching FunBox's loader-safe DEX
- * bridge:
+ * return values are represented as Object.
  *
  *   bridge(T0 p0, T1 p1, …) -> R (instance receiver is implicit)
- *     Boxes primitive params into Object[], calls WekitHookBridgeRuntime.dispatch,
+ *     Boxes primitive params into Object[], calls ArtHookBridgeRuntime.dispatch,
  *     unboxes the Object result back to R.
  *
  *   backup(T0 p0, T1 p1, …) -> R
@@ -50,11 +61,11 @@ import java.util.concurrent.atomic.AtomicLong
  * preserving the static bit is therefore part of the ABI contract.
  */
 @Keep
-class ZygiskHookBridge : IHookBridge {
+class ArtHookBridge : IHookBridge {
 
     // ── IHookBridge metadata ──────────────────────────────────────────────────
 
-    override val hookBridgeName: String = "ArtHooker"
+    override val hookBridgeName: String = "ART 钩子"
     override val frameworkName: String = "Zygisk"
     override val frameworkVersion: String = "v1"
     override val frameworkVersionCode: Long = 1
@@ -62,7 +73,7 @@ class ZygiskHookBridge : IHookBridge {
 
     private val hookCounterInternal = AtomicLong(0L)
     override val hookCounter: Long get() = hookCounterInternal.get()
-    override val hookedMethods: Set<Member?> get() = WekitHookBridgeRuntime.hookedMembers()
+    override val hookedMethods: Set<Member?> get() = ArtHookBridgeRuntime.hookedMembers()
 
     // ── Hook ─────────────────────────────────────────────────────────────────
 
@@ -90,11 +101,11 @@ class ZygiskHookBridge : IHookBridge {
         // Fast path for an existing native hook. Registration and unhook remain
         // serialized, but DEX generation for a new hook must not hold this
         // process-wide lock: DexMaker/loadClass can take tens of milliseconds.
-        val existingHandle = synchronized(WekitHookBridgeRuntime.hookLock) {
-            val existingId = WekitHookBridgeRuntime.getHookId(member)
+        val existingHandle = synchronized(ArtHookBridgeRuntime.hookLock) {
+            val existingId = ArtHookBridgeRuntime.getHookId(member)
                 ?: return@synchronized null
-            val registration = WekitHookBridgeRuntime.addCallback(existingId, callback, priority)
-            ZygiskUnhookHandle(member, callback, existingId, registration)
+            val registration = ArtHookBridgeRuntime.addCallback(existingId, callback, priority)
+            ArtUnhookHandle(member, callback, existingId, registration)
         }
         if (existingHandle != null) return existingHandle
 
@@ -102,8 +113,8 @@ class ZygiskHookBridge : IHookBridge {
         // class then becomes unreachable, and the second locked check below
         // attaches this callback to the already-installed native hook.
         val bridge = generateBridgePair(member)
-        val (hookId, registration) = synchronized(WekitHookBridgeRuntime.hookLock) {
-            val existingId = WekitHookBridgeRuntime.getHookId(member)
+        val (hookId, registration) = synchronized(ArtHookBridgeRuntime.hookLock) {
+            val existingId = ArtHookBridgeRuntime.getHookId(member)
             val id = if (existingId != null) {
                 existingId
             } else {
@@ -115,7 +126,7 @@ class ZygiskHookBridge : IHookBridge {
                 }
 
                 // Register first so dispatch() has an entry before any calls.
-                val newId = WekitHookBridgeRuntime.register(member, bridge.backupMethod)
+                val newId = ArtHookBridgeRuntime.register(member, bridge.backupMethod, bridge.dexFile)
 
                 // Write hookId into the generated class's static field.
                 // Must happen before nativeHookMethod installs the entry_point.
@@ -123,7 +134,7 @@ class ZygiskHookBridge : IHookBridge {
 
                 val rc = nativeHookMethod(targetArt, backupArt, bridgeArt, newId)
                 if (rc != 0) {
-                    WekitHookBridgeRuntime.unregister(newId)
+                    ArtHookBridgeRuntime.unregister(newId)
                     error("art_hook_method failed (rc=$rc) for $member")
                 }
 
@@ -133,10 +144,10 @@ class ZygiskHookBridge : IHookBridge {
             // Pair callback registration with the native hook lifecycle. A
             // concurrent final unhook must never remove the entry in the gap
             // between installing/looking up a hook and adding this callback.
-            id to WekitHookBridgeRuntime.addCallback(id, callback, priority)
+            id to ArtHookBridgeRuntime.addCallback(id, callback, priority)
         }
 
-        return ZygiskUnhookHandle(member, callback, hookId, registration)
+        return ArtUnhookHandle(member, callback, hookId, registration)
     }
 
     // ── Deoptimize (unsupported) ──────────────────────────────────────────────
@@ -149,14 +160,14 @@ class ZygiskHookBridge : IHookBridge {
     // ── Invoke original ───────────────────────────────────────────────────────
 
     override fun invokeOriginalMethod(method: Method, thisObject: Any?, args: Array<Any?>): Any? =
-        WekitHookBridgeRuntime.invokeOriginal(method, thisObject, args)
+        ArtHookBridgeRuntime.invokeOriginal(method, thisObject, args)
 
     override fun <T> invokeOriginalConstructor(ctor: Constructor<T?>, thisObject: T, args: Array<Any?>) {
-        WekitHookBridgeRuntime.invokeOriginal(ctor, thisObject, args)
+        ArtHookBridgeRuntime.invokeOriginal(ctor, thisObject, args)
     }
 
     override fun <T> newInstanceOrigin(constructor: Constructor<T?>, vararg args: Any): T {
-        if (WekitHookBridgeRuntime.getHookId(constructor) == null) {
+        if (ArtHookBridgeRuntime.getHookId(constructor) == null) {
             @Suppress("UNCHECKED_CAST")
             return constructor.newInstance(*args) as T
         }
@@ -168,7 +179,7 @@ class ZygiskHookBridge : IHookBridge {
         val instance = nativeAllocateInstance(constructor.declaringClass) as T
         val originArgs = arrayOfNulls<Any>(args.size)
         args.copyInto(originArgs)
-        WekitHookBridgeRuntime.invokeOriginal(constructor, instance, originArgs)
+        ArtHookBridgeRuntime.invokeOriginal(constructor, instance, originArgs)
         return instance
     }
 
@@ -177,20 +188,30 @@ class ZygiskHookBridge : IHookBridge {
     private data class BridgePair(
         val bridgeMethod: Method,
         val backupMethod: Method,
+        val dexFile: DexFile,
         /** Call this after registration to write the hookId into the generated class. */
         val setHookId: (Long) -> Unit,
     )
 
     // ── DexMaker bridge generation ────────────────────────────────────────────
 
+    @Suppress("PrivatePropertyName")
+    private val OBJ = TypeId.OBJECT as TypeId<Any>
+    @Suppress("PrivatePropertyName")
+    private val OBJ_ARR = TypeId.get<Array<Any?>>("[Ljava/lang/Object;")
+    @Suppress("PrivatePropertyName")
+    private val PLONG = TypeId.LONG
+    @Suppress("PrivatePropertyName")
+    private val INT_TID = TypeId.INT
+
     /**
      * Generates a class with two methods matching [target]'s calling convention.
      *
-     * Bridge body (FunBox approach):
+     * Bridge body:
      *   1. Read static field `hookId`.
      *   2. Allocate `Object[] args` of length == target param count.
      *   3. For each param: box primitive → Object, or use reference directly.
-     *   4. Call `WekitHookBridgeRuntime.dispatch(hookId, self, args)`.
+     *   4. Call `ArtHookBridgeRuntime.dispatch(hookId, self, args)`.
      *   5. Unbox the returned Object to target return type (or return void).
      *
      * Backup body: throws UnsupportedOperationException — ArtMethod is overwritten
@@ -200,14 +221,14 @@ class ZygiskHookBridge : IHookBridge {
     private fun generateBridgePair(target: Executable): BridgePair {
         val targetParams: Array<Class<*>> = target.parameterTypes
         val targetReturn: Class<*> = when (target) {
-            is Method      -> target.returnType
-            is Constructor<*> -> void   // constructors are void at the ART level
-            else            -> void
+            is Method         -> target.returnType
+            is Constructor<*> -> void // constructors are void at the ART level
+            else              -> void
         }
 
-        val suffix       = java.lang.Long.toHexString(bridgeCounter.incrementAndGet())
-        val fqn          = $$"dev.ujhhgtg.wekit.loader.entry.zygisk.WkBr$$$suffix"
-        val descriptor   = "L${fqn.replace('.', '/')};"
+        val suffix = java.lang.Long.toHexString(bridgeCounter.incrementAndGet())
+        val fqn = $$"$${PackageNames.MODULE}.loader.entry.zygisk.WkBr$$$suffix"
+        val descriptor = "L${fqn.replace('.', '/')};"
 
         val dm = DexMaker()
 
@@ -215,23 +236,20 @@ class ZygiskHookBridge : IHookBridge {
 
         @Suppress("UNCHECKED_CAST")
         fun <T> tid(c: Class<T>): TypeId<T> = when (c) {
-            int -> TypeId.INT       as TypeId<T>
-            long -> TypeId.LONG      as TypeId<T>
-            bool -> TypeId.BOOLEAN   as TypeId<T>
-            byte -> TypeId.BYTE      as TypeId<T>
-            char -> TypeId.CHAR      as TypeId<T>
-            short -> TypeId.SHORT     as TypeId<T>
-            float -> TypeId.FLOAT     as TypeId<T>
-            double -> TypeId.DOUBLE    as TypeId<T>
-            void -> TypeId.VOID      as TypeId<T>
-            else -> TypeId.get(c)
+            int    -> TypeId.INT     as TypeId<T>
+            long   -> TypeId.LONG    as TypeId<T>
+            bool   -> TypeId.BOOLEAN as TypeId<T>
+            byte   -> TypeId.BYTE    as TypeId<T>
+            char   -> TypeId.CHAR    as TypeId<T>
+            short  -> TypeId.SHORT   as TypeId<T>
+            float  -> TypeId.FLOAT   as TypeId<T>
+            double -> TypeId.DOUBLE  as TypeId<T>
+            void   -> TypeId.VOID    as TypeId<T>
+            else   -> TypeId.get(c)
         }
 
-        val classId   = TypeId.get<Any>(descriptor)
-        val OBJ       = TypeId.OBJECT as TypeId<Any>
-        val OBJ_ARR   = TypeId.get<Array<Any?>>("[Ljava/lang/Object;")
-        val PLONG     = TypeId.LONG        // TypeId<Long> — no cast needed (java.lang.Long = Kotlin Long)
-        val INT_TID   = TypeId.INT         // TypeId<Int>  — no cast needed
+        val classId        = TypeId.get<Any>(descriptor)
+
 
         dm.declare(classId, fqn, Modifier.PUBLIC, OBJ)
 
@@ -239,14 +257,14 @@ class ZygiskHookBridge : IHookBridge {
         val hookIdFld = classId.getField(PLONG, "hookId") as FieldId<Any, Long>
         dm.declare(hookIdFld, Modifier.PUBLIC or Modifier.STATIC, 0L)
 
-        // WekitHookBridgeRuntime.dispatch(long, Object, Object[]) -> Object
-        val rtFqn = WekitHookBridgeRuntime::class.java.name.replace('.', '/')
+        // ArtHookBridgeRuntime.dispatch(long, Object, Object[]) -> Object
+        val rtFqn = ArtHookBridgeRuntime::class.java.name.replace('.', '/')
         val rtType = TypeId.get<Any>("L$rtFqn;")
         val dispatchMid = rtType.getMethod(OBJ, "dispatch", PLONG, OBJ, OBJ_ARR) as MethodId<Any, Any>
 
-        val isStatic = target is Method && Modifier.isStatic(target.modifiers)
+        val isStatic = target is Method && target.isStatic
 
-        // FunBox deliberately avoids referring to host-private classes from the
+        // Deliberately avoids referring to host-private classes from the
         // generated DEX. Primitive types stay exact; every reference is Object.
         val dexParamClasses = Array(targetParams.size) { i ->
             if (targetParams[i].isPrimitive) targetParams[i] else Any::class.java
@@ -269,23 +287,23 @@ class ZygiskHookBridge : IHookBridge {
         )
 
         fun boxInfo(prim: Class<*>): BoxInfo? {
-            if (!prim.isPrimitive || prim == Void.TYPE) return null
+            if (!prim.isPrimitive || prim == void) return null
             @Suppress("UNCHECKED_CAST")
             val wrapperClass: Class<Any> = when (prim) {
-                int     -> Int::class.java
-                long    -> Long::class.java
-                bool -> Boolean::class.java
-                byte    -> Byte::class.java
-                char    -> Char::class.java
-                short   -> Short::class.java
-                float   -> Float::class.java
-                double  -> Double::class.java
-                else -> return null
+                int     -> BInt
+                long    -> BLong
+                bool    -> BBool
+                byte    -> BByte
+                char    -> BChar
+                short   -> BShort
+                float   -> BFloat
+                double  -> BDouble
+                else    -> return null
             } as Class<Any>
             val unboxName = when (prim) {
                 int     -> "intValue"
                 long    -> "longValue"
-                bool -> "booleanValue"
+                bool    -> "booleanValue"
                 byte    -> "byteValue"
                 char    -> "charValue"
                 short   -> "shortValue"
@@ -293,7 +311,7 @@ class ZygiskHookBridge : IHookBridge {
                 double  -> "doubleValue"
                 else -> return null
             }
-            val wTid    = tid(wrapperClass)
+            val wTid = tid(wrapperClass)
             val primTid = tid(prim)
             @Suppress("UNCHECKED_CAST")
             return BoxInfo(
@@ -314,8 +332,8 @@ class ZygiskHookBridge : IHookBridge {
             if (isBackup) {
                 val usoeTid = TypeId.get<UnsupportedOperationException>(
                     "Ljava/lang/UnsupportedOperationException;")
-                val strTid  = TypeId.STRING
-                val exLocal  = code.newLocal(usoeTid)
+                val strTid = TypeId.STRING
+                val exLocal = code.newLocal(usoeTid)
                 val msgLocal = code.newLocal(strTid)
                 code.loadConstant(msgLocal, "backup not initialized")
                 @Suppress("UNCHECKED_CAST")
@@ -325,71 +343,88 @@ class ZygiskHookBridge : IHookBridge {
                 return
             }
 
-            // 1. Read hookId
+            // DexMaker fixes register positions as soon as the first instruction
+            // touches a Local, so every scratch local must be allocated up front.
+            val receiver = if (isStatic) null else code.getThis(classId)
+            @Suppress("UNCHECKED_CAST")
+            val parameterLocals = Array(targetParams.size) { i ->
+                code.getParameter(i, allParamTids[i] as TypeId<Any>)
+            }
+            val parameterBoxInfos = Array(targetParams.size) { i ->
+                boxInfo(targetParams[i])
+            }
             val hookIdLocal = code.newLocal(PLONG)
+            val selfLocal = code.newLocal(OBJ)
+            val sizeLocal = code.newLocal(INT_TID)
+            val argsLocal = code.newLocal(OBJ_ARR)
+            val indexLocals = Array(targetParams.size) {
+                code.newLocal(INT_TID)
+            }
+            @Suppress("UNCHECKED_CAST")
+            val argumentLocals = Array(targetParams.size) { i ->
+                val argumentType = parameterBoxInfos[i]?.wrapperTid ?: OBJ
+                code.newLocal(argumentType as TypeId<Any>)
+            }
+            val rawResultLocal = code.newLocal(OBJ)
+            val returnBoxInfo = boxInfo(targetReturn)
+            @Suppress("UNCHECKED_CAST")
+            val returnWrapperLocal = returnBoxInfo?.let {
+                code.newLocal(it.wrapperTid as TypeId<Any>)
+            }
+            @Suppress("UNCHECKED_CAST")
+            val primitiveResultLocal = returnBoxInfo?.let {
+                code.newLocal(tid(targetReturn) as TypeId<Any>)
+            }
+
+            // 1. Read hookId.
             code.sget(hookIdFld, hookIdLocal)
 
             // 2. Get self for dispatch. The receiver is implicit for an
             // instance method and absent for a static method.
-            @Suppress("UNCHECKED_CAST")
-            val selfLocal: com.android.dx.Local<Any> = if (isStatic) {
-                val nl = code.newLocal(OBJ)
-                code.loadConstant(nl as com.android.dx.Local<Nothing?>, null)
-                nl
+            if (receiver == null) {
+                @Suppress("UNCHECKED_CAST")
+                code.loadConstant(selfLocal as com.android.dx.Local<Nothing?>, null)
             } else {
-                val receiver = code.getThis(classId)
-                val nl = code.newLocal(OBJ)
-                code.cast(nl, receiver)
-                nl
+                code.cast(selfLocal, receiver)
             }
 
-            // 3. Allocate Object[] args
-            val sizeLocal = code.newLocal(INT_TID)
+            // 3. Allocate Object[] args.
             code.loadConstant(sizeLocal, targetParams.size)
-            val argsLocal = code.newLocal(OBJ_ARR)
             code.newArray(argsLocal, sizeLocal)
 
-            // 4. Box each param into args[i]
+            // 4. Box each param into args[i].
             for (i in targetParams.indices) {
-                val paramTid   = allParamTids[i]
-                val paramLocal = code.getParameter(i, paramTid)
-                val idxLocal   = code.newLocal(INT_TID)
+                val paramLocal = parameterLocals[i]
+                val idxLocal = indexLocals[i]
+                val argumentLocal = argumentLocals[i]
                 code.loadConstant(idxLocal, i)
 
-                val bi = boxInfo(targetParams[i])
+                val bi = parameterBoxInfos[i]
                 if (bi != null) {
-                    @Suppress("UNCHECKED_CAST")
-                    val boxedLocal = code.newLocal(bi.wrapperTid as TypeId<Any>)
                     @Suppress("UNCHECKED_CAST")
                     code.invokeStatic(
                         bi.valueOfMid as MethodId<Any, Any>,
-                        boxedLocal,
-                        paramLocal as com.android.dx.Local<Any>,
+                        argumentLocal,
+                        paramLocal,
                     )
-                    code.aput(argsLocal, idxLocal, boxedLocal)
                 } else {
-                    @Suppress("UNCHECKED_CAST")
-                    val objLocal = code.newLocal(OBJ)
-                    code.cast(objLocal, paramLocal)
-                    code.aput(argsLocal, idxLocal, objLocal)
+                    code.cast(argumentLocal, paramLocal)
                 }
+                code.aput(argsLocal, idxLocal, argumentLocal)
             }
 
-            // 5. Call dispatch(hookId, self, args) -> Object
-            val rawResultLocal = code.newLocal(OBJ)
+            // 5. Call dispatch(hookId, self, args) -> Object.
             code.invokeStatic(dispatchMid, rawResultLocal, hookIdLocal, selfLocal, argsLocal)
 
-            // 6. Return (unboxing as needed)
+            // 6. Return (unboxing as needed).
             when {
-                targetReturn == Void.TYPE -> code.returnVoid()
+                targetReturn == void -> code.returnVoid()
 
                 targetReturn.isPrimitive -> {
-                    val bi = boxInfo(targetReturn)!!
-                    @Suppress("UNCHECKED_CAST")
-                    val wLocal = code.newLocal(bi.wrapperTid as TypeId<Any>)
+                    val bi = checkNotNull(returnBoxInfo)
+                    val wLocal = checkNotNull(returnWrapperLocal)
+                    val primLocal = checkNotNull(primitiveResultLocal)
                     code.cast(wLocal, rawResultLocal)
-                    @Suppress("UNCHECKED_CAST")
-                    val primLocal = code.newLocal(tid(targetReturn) as TypeId<Any>)
                     @Suppress("UNCHECKED_CAST")
                     code.invokeVirtual(
                         bi.unboxMid as MethodId<Any, Any>,
@@ -409,12 +444,23 @@ class ZygiskHookBridge : IHookBridge {
         // ── Load generated DEX ────────────────────────────────────────────────
 
         val dexBytes = dm.generate()
-        val cl = dalvik.system.InMemoryDexClassLoader(
-            java.nio.ByteBuffer.wrap(dexBytes),
-            ZygiskHookBridge::class.java.classLoader,
-        )
-        check(nativeTrustClassLoader(cl)) { "failed to trust generated hook dex" }
-        val genClass = cl.loadClass(fqn)
+        val parentLoader = ArtHookBridge::class.java.classLoader
+            ?: ClassLoader.getSystemClassLoader()
+        val dexCtor = DexFile::class.java.declaredConstructors
+            .firstOrNull { ctor ->
+                ctor.parameterCount == 3 &&
+                    ctor.parameterTypes[0] == Array<ByteBuffer>::class.java
+            }
+            ?: error("DexFile(ByteBuffer[], ClassLoader, Element[]) constructor not found")
+        dexCtor.isAccessible = true
+        val dexFile = dexCtor.newInstance(
+            arrayOf(ByteBuffer.wrap(dexBytes)),
+            parentLoader,
+            null,
+        ) as DexFile
+        check(nativeTrustDexFile(dexFile)) { "failed to trust generated hook dex" }
+        @Suppress("DEPRECATION")
+        val genClass = dexFile.loadClass(fqn, parentLoader)
 
         // Reference parameters are Object in the generated DEX, so reflection
         // must look up the same erased signature.
@@ -429,45 +475,46 @@ class ZygiskHookBridge : IHookBridge {
         return BridgePair(
             bridgeMethod = bridgeMethod,
             backupMethod = backupMethod,
-            setHookId    = { id -> hookIdStaticFld.setLong(null, id) },
+            dexFile = dexFile,
+            setHookId = { id -> hookIdStaticFld.setLong(null, id) },
         )
     }
 
     // ── Native JNI declarations (registered by the resident Zygisk SO) ───────
 
     companion object {
-        private const val TAG = "ZygiskHookBridge"
+        private const val TAG = "ArtHookBridge"
         private val bridgeCounter = AtomicLong(0L)
 
         @JvmStatic private external fun nativeGetArtMethod(executable: Executable): Long
         @JvmStatic private external fun nativeHookMethod(
             targetArt: Long, backupArt: Long, bridgeArt: Long, hookId: Long): Int
         @JvmStatic private external fun nativeUnhookMethod(targetArt: Long, backupArt: Long): Int
-        @JvmStatic private external fun nativeTrustClassLoader(classLoader: ClassLoader): Boolean
+        @JvmStatic private external fun nativeTrustDexFile(dexFile: DexFile): Boolean
         @JvmStatic private external fun nativeAllocateInstance(clazz: Class<*>): Any
         @JvmStatic private external fun nativeHideLoadedModuleLibraries(): Boolean
     }
 
     // ── Unhook handle ─────────────────────────────────────────────────────────
 
-    private inner class ZygiskUnhookHandle(
+    private inner class ArtUnhookHandle(
         override val member: Member,
         override val callback: IMemberHookCallback,
         private val hookId: Long,
-        private val registration: WekitHookBridgeRuntime.PrioritizedCallback,
+        private val registration: ArtHookBridgeRuntime.PrioritizedCallback,
     ) : MemberUnhookHandle {
 
         @Volatile private var active = true
         override val isHookActive: Boolean get() = active
 
         override fun unhook() {
-            synchronized(WekitHookBridgeRuntime.hookLock) {
+            synchronized(ArtHookBridgeRuntime.hookLock) {
                 if (!active) return
-                if (!WekitHookBridgeRuntime.removeCallback(hookId, registration)) {
+                if (!ArtHookBridgeRuntime.removeCallback(hookId, registration)) {
                     active = false
                     return
                 }
-                val entry = WekitHookBridgeRuntime.getEntry(hookId)
+                val entry = ArtHookBridgeRuntime.getEntry(hookId)
                 if (entry == null || entry.callbacks.isNotEmpty()) {
                     active = false
                     return
@@ -478,7 +525,7 @@ class ZygiskHookBridge : IHookBridge {
                 if (targetArt == 0L || backupArt == 0L ||
                     nativeUnhookMethod(targetArt, backupArt) != 0
                 ) {
-                    if (!WekitHookBridgeRuntime.restoreCallback(hookId, registration)) {
+                    if (!ArtHookBridgeRuntime.restoreCallback(hookId, registration)) {
                         active = false
                         Log.e(TAG, "failed to unhook $member; callback restoration also failed")
                     } else {
@@ -486,7 +533,7 @@ class ZygiskHookBridge : IHookBridge {
                     }
                     return
                 }
-                WekitHookBridgeRuntime.retire(hookId)
+                ArtHookBridgeRuntime.retire(hookId)
                 hookCounterInternal.decrementAndGet()
                 active = false
             }
