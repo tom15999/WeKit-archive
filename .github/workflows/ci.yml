@@ -159,12 +159,6 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install Zygisk NDK
-        run: |
-          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          NDK_VERSION="$(jq -er '.ndkVer' wekit-zygisk/project-config.json)"
-          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}"
-
       - name: Download Release APK artifact
         uses: actions/download-artifact@v8
         with:

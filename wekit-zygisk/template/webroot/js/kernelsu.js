@@ -25,33 +25,6 @@ export function exec(command, options = {}) {
   });
 }
 
-export async function listPackages(type = "all") {
-  if (typeof globalThis.ksu?.listPackages !== "function") {
-    throw new Error("ksu.listPackages is not available");
-  }
-  const raw = await Promise.resolve(globalThis.ksu.listPackages(type));
-  const packages = typeof raw === "string" ? JSON.parse(raw) : raw;
-  if (!Array.isArray(packages)) {
-    throw new Error("ksu.listPackages returned a non-array value");
-  }
-  return packages
-    .map((value) => typeof value === "string" ? value.replace(/^package:/, "") : "")
-    .filter(Boolean);
-}
-
-export async function getPackagesInfo(packages) {
-  if (typeof globalThis.ksu?.getPackagesInfo !== "function") {
-    throw new Error("ksu.getPackagesInfo is not available");
-  }
-  const requested = Array.isArray(packages) ? packages : [packages];
-  const raw = await Promise.resolve(globalThis.ksu.getPackagesInfo(JSON.stringify(requested)));
-  const result = typeof raw === "string" ? JSON.parse(raw) : raw;
-  if (!Array.isArray(result)) {
-    throw new Error("ksu.getPackagesInfo returned a non-array value");
-  }
-  return result;
-}
-
 export function toast(message) {
   if (typeof globalThis.ksu?.toast === "function") globalThis.ksu.toast(message);
 }

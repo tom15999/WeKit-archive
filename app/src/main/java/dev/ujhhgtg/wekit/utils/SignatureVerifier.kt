@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package dev.ujhhgtg.wekit.utils
 
 import android.content.Context

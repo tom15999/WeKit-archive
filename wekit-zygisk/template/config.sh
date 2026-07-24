@@ -283,7 +283,7 @@ collect_wechat_targets_locked() {
 
 # Publish a package scan while preserving each surviving target's explicit
 # toggle. Every newly discovered package starts disabled. WebUI supplies the
-# scan through KernelSU's listPackages/getPackagesInfo APIs.
+# scan after using KernelSU's root-shell API to run Android's pm CLI.
 publish_scan_locked() {
   scan_file=$1
   ensure_state_dir || return 1

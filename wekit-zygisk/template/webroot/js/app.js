@@ -1,8 +1,6 @@
 import {
   exec,
-  getPackagesInfo,
   hasKernelSuBridge,
-  listPackages,
   shellQuote,
 } from "./bridge.js";
 
@@ -86,7 +84,8 @@ async function configCommand(command, ...args) {
 }
 
 const WECHAT_PREFIX = "com.tencent.mm";
-const UID_PER_ANDROID_USER = 100000;
+const PACKAGE_NAME_PATTERN = /^[A-Za-z0-9._]+$/;
+const ANDROID_PM = "/system/bin/pm";
 
 function isWeChatPackage(packageName) {
   return (
@@ -94,38 +93,58 @@ function isWeChatPackage(packageName) {
   );
 }
 
-function uidToUserId(uid) {
-  const numericUid = Number(uid);
-  if (!Number.isSafeInteger(numericUid) || numericUid < 0) return null;
-  return Math.floor(numericUid / UID_PER_ANDROID_USER);
+function parseAndroidUserIds(stdout) {
+  const userIds = new Set();
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = line.match(/UserInfo\{(\d+):/);
+    if (match) userIds.add(Number(match[1]));
+  }
+  return [...userIds].sort((left, right) => left - right);
+}
+
+function parseInstalledPackages(stdout) {
+  const packages = new Set();
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("package:")) continue;
+    const packageName = trimmed.slice("package:".length);
+    if (
+      PACKAGE_NAME_PATTERN.test(packageName) &&
+      isWeChatPackage(packageName)
+    ) {
+      packages.add(packageName);
+    }
+  }
+  return [...packages].sort((left, right) => left.localeCompare(right));
 }
 
 async function scanWeChatTargets() {
-  if (
-    typeof window.ksu?.listPackages !== "function" ||
-    typeof window.ksu?.getPackagesInfo !== "function"
-  ) {
-    throw new Error("KernelSU listPackages/getPackagesInfo API 不可用");
+  const usersOutput = await runCheckedCommand(
+    `${ANDROID_PM} list users`,
+    "读取 Android 用户",
+  );
+  const userIds = parseAndroidUserIds(usersOutput);
+  if (userIds.length === 0) {
+    throw new Error("pm list users 未返回可识别的 Android 用户");
   }
 
-  const listedPackages = await listPackages("all");
-  const candidates = listedPackages.filter(isWeChatPackage);
-  if (candidates.length === 0) return [];
-
-  const packageInfo = await getPackagesInfo(candidates);
+  const targetsByUser = await Promise.all(
+    userIds.map(async (userId) => {
+      const packagesOutput = await runCheckedCommand(
+        `${ANDROID_PM} list packages --user ${userId}`,
+        `读取 Android 用户 ${userId} 的软件包`,
+      );
+      return parseInstalledPackages(packagesOutput).map((packageName) => ({
+        userId,
+        packageName,
+      }));
+    }),
+  );
   const targets = new Map();
-  for (let index = 0; index < candidates.length; index += 1) {
-    const info = packageInfo[index];
-    const packageName = isWeChatPackage(info?.packageName)
-      ? info.packageName
-      : candidates[index];
-    const userId = uidToUserId(info?.uid);
-    if (packageName && userId !== null) {
-      targets.set(`${userId}\t${packageName}`, { userId, packageName });
+  for (const userTargets of targetsByUser) {
+    for (const target of userTargets) {
+      targets.set(`${target.userId}\t${target.packageName}`, target);
     }
-  }
-  if (targets.size === 0) {
-    throw new Error("KernelSU getPackagesInfo 未返回可用 uid");
   }
   return [...targets.values()].sort(
     (left, right) =>

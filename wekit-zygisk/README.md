@@ -9,6 +9,9 @@ Open the WeKit module page in KernelSU to manage injection targets.
 
 - The first page open scans every Android user and adds every installed package
   matching `PackageNames.isWeChat` (`com.tencent.mm*`) as a disabled target.
+- Package discovery uses KernelSU's root-shell `exec` API to run
+  `/system/bin/pm list users` and `pm list packages --user <id>`; it does not
+  use KernelSU's `listPackages` or `getPackagesInfo` APIs.
 - Enabling one instance injects its main process and every process named
   `<package>:...` for that same Android user at the next process launch.
 - Refresh scans all Android users again, replaces the package membership with

@@ -62,6 +62,7 @@ extract "$ZIPFILE" 'module.prop'     "$MODPATH"
 extract "$ZIPFILE" 'post-fs-data.sh' "$MODPATH"
 extract "$ZIPFILE" 'service.sh'      "$MODPATH"
 extract "$ZIPFILE" 'config.sh'       "$MODPATH"
+extract "$ZIPFILE" 'action.sh'       "$MODPATH"
 extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'webroot/index.html'       "$MODPATH"
 extract "$ZIPFILE" 'webroot/css/app.css'      "$MODPATH"
@@ -170,6 +171,7 @@ set_perm "$MODPATH/module.prop" 0 0 0644
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/config.sh" 0 0 0755
+set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/uninstall.sh" 0 0 0755
 
 # KernelSU assigns the WebUI directory's mode and SELinux context itself.

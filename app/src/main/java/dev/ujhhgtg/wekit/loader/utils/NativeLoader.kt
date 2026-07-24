@@ -7,7 +7,6 @@ import android.os.Process
 import com.tencent.mmkv.MMKV
 import dev.ujhhgtg.wekit.loader.utils.NativeLoader.init
 import dev.ujhhgtg.wekit.preferences.WePrefs
-import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.fs.createDirsSafe
 import java.io.File
 import java.util.zip.ZipFile
@@ -15,8 +14,6 @@ import kotlin.io.path.div
 import kotlin.io.path.exists
 
 object NativeLoader {
-
-    private const val TAG = "NativeLoader"
 
     private data class ZygiskPayload(
         val apk: File,
@@ -44,54 +41,34 @@ object NativeLoader {
     }
 
     fun init(hostCtx: Context) {
-        val identity = processIdentity()
-        WeLogger.i(TAG, "stage=init-enter $identity zygisk=${zygiskPayload != null}")
         ensureNativeLibrariesLoaded()
-        WeLogger.i(TAG, "stage=native-libraries-ready $identity")
         val mmkvDir = hostCtx.filesDir.toPath() / "mmkv"
         if (!mmkvDir.exists()) {
-            WeLogger.i(TAG, "stage=mmkv-directory-create-begin $identity path=$mmkvDir")
             mmkvDir.createDirsSafe()
-            WeLogger.i(TAG, "stage=mmkv-directory-create-complete $identity path=$mmkvDir")
         }
 
         val libLoader = zygiskPayload?.let { zygiskMmkvLibLoader() }
-        WeLogger.i(
-            TAG,
-            "stage=mmkv-initialize-begin $identity path=$mmkvDir customLoader=${libLoader != null}"
-        )
         if (libLoader == null) {
             MMKV.initialize(hostCtx, mmkvDir.toString())
         } else {
             MMKV.initialize(hostCtx, mmkvDir.toString(), libLoader)
         }
-        WeLogger.i(TAG, "stage=mmkv-initialize-complete $identity")
 
-        WeLogger.i(TAG, "stage=mmkv-open-preferences-begin $identity id=${WePrefs.PREFS_NAME}")
         MMKV.mmkvWithID(WePrefs.PREFS_NAME, MMKV.MULTI_PROCESS_MODE)
-        WeLogger.i(TAG, "stage=mmkv-open-preferences-complete $identity")
     }
 
     private fun ensureNativeLibrariesLoaded() {
         synchronized(nativeLoadLock) {
-            val identity = processIdentity()
             if (nativeLibrariesLoaded) {
-                WeLogger.i(TAG, "stage=native-libraries-already-loaded $identity")
                 return@synchronized
             }
             val payload = zygiskPayload
             if (payload == null) {
                 // Xposed/Frida paths use the normal installed-APK library lookup.
-                WeLogger.i(TAG, "stage=system-load-library-begin $identity library=dexkit")
                 System.loadLibrary("dexkit")
-                WeLogger.i(TAG, "stage=system-load-library-complete $identity library=dexkit")
-                WeLogger.i(TAG, "stage=system-load-library-begin $identity library=wekit_native")
                 System.loadLibrary("wekit_native")
-                WeLogger.i(TAG, "stage=system-load-library-complete $identity library=wekit_native")
             } else {
-                WeLogger.i(TAG, "stage=zygisk-native-libraries-begin $identity apk=${payload.apk}")
                 loadZygiskLibraries(payload)
-                WeLogger.i(TAG, "stage=zygisk-native-libraries-complete $identity")
             }
             nativeLibrariesLoaded = true
         }
@@ -104,10 +81,7 @@ object NativeLoader {
      */
     @SuppressLint("UnsafeDynamicallyLoadedCode")
     private fun loadZygiskLibraries(payload: ZygiskPayload) {
-        val identity = processIdentity()
-        WeLogger.i(TAG, "stage=abi-detection-begin $identity")
         val abi = currentProcessAbi(payload.apk)
-        WeLogger.i(TAG, "stage=abi-detection-complete $identity abi=$abi")
         val libraryDir = File(payload.dataDir, ".wekit-native-$abi")
         if (!libraryDir.exists() && !libraryDir.mkdirs()) {
             error("cannot create Zygisk native-library directory: $libraryDir")
@@ -125,27 +99,10 @@ object NativeLoader {
             for (name in names) {
                 val (libraryName, fileName) = name
                 val entry = archive.getEntry("lib/$abi/$fileName") ?: continue
-                WeLogger.i(
-                    TAG,
-                    "stage=native-library-extract-begin $identity library=$libraryName file=$fileName"
-                )
                 val extracted = extractLibrary(archive, entry.name, libraryDir, fileName)
-                WeLogger.i(
-                    TAG,
-                    "stage=native-library-extract-complete $identity " +
-                        "library=$libraryName path=$extracted size=${extracted.length()}"
-                )
                 libraries[libraryName] = extracted
                 if (libraryName != "mmkv") {
-                    WeLogger.i(
-                        TAG,
-                        "stage=system-load-begin $identity library=$libraryName path=$extracted"
-                    )
                     System.load(extracted.absolutePath)
-                    WeLogger.i(
-                        TAG,
-                        "stage=system-load-complete $identity library=$libraryName path=$extracted"
-                    )
                 }
             }
             require(archive.getEntry("lib/$abi/libdexkit.so") != null) {
@@ -160,34 +117,13 @@ object NativeLoader {
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
     private fun zygiskMmkvLibLoader(): MMKV.LibLoader = MMKV.LibLoader { libraryName ->
-        val identity = processIdentity()
         val library = zygiskNativeLibraries[libraryName]
         if (library != null) {
-            WeLogger.i(
-                TAG,
-                "stage=mmkv-system-load-begin $identity library=$libraryName path=$library"
-            )
             System.load(library.absolutePath)
-            WeLogger.i(
-                TAG,
-                "stage=mmkv-system-load-complete $identity library=$libraryName path=$library"
-            )
         } else {
-            WeLogger.i(
-                TAG,
-                "stage=mmkv-system-load-library-begin $identity library=$libraryName"
-            )
             System.loadLibrary(libraryName)
-            WeLogger.i(
-                TAG,
-                "stage=mmkv-system-load-library-complete $identity library=$libraryName"
-            )
         }
     }
-
-    private fun processIdentity(): String =
-        "process=${runCatching { android.app.Application.getProcessName() }.getOrDefault("unknown")} " +
-            "pid=${Process.myPid()} tid=${Process.myTid()}"
 
     private fun currentProcessAbi(apk: File): String {
         val candidates = if (Process.is64Bit()) {
