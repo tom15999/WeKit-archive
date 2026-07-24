@@ -226,7 +226,7 @@ object JavaEngine {
             try {
                 val bshMethod = plugin.interpreter.nameSpace.getMethod(
                     "onRecvPayMsg",
-                    arrayOf(Any::class.java)
+                    arrayOf(any)
                 )
                 bshMethod?.apply {
                     invoke(arrayOf(payMsgBean), plugin.interpreter)
@@ -494,7 +494,7 @@ object JavaEngine {
             // log(message) — logs via WeLogger with plugin prefix
             setMethod(
                 BshMethod(
-                    "log", arrayOf(Any::class.java)
+                    "log", arrayOf(any)
                 ) {
                     val message = it[0]
                     WeLogger.i(plugin.name, message.toString())
@@ -1181,7 +1181,7 @@ object JavaEngine {
             })
 
             // sendMediaMsg(talker, mediaMessage, appId)
-            setMethod(BshMethod("sendMediaMsg", arrayOf(BString, Any::class.java, BString)) {
+            setMethod(BshMethod("sendMediaMsg", arrayOf(BString, any, BString)) {
                 val talker = it[0] as String
                 val mediaMessage = it[1]
                 val appId = it[2] as String
@@ -1658,25 +1658,25 @@ object JavaEngine {
             })
 
             // === Reflection Helpers ===
-            setMethod(BshMethod("firstMethod", arrayOf(Any::class.java, BString)) {
+            setMethod(BshMethod("firstMethod", arrayOf(any, BString)) {
                 val clazz = if (it[0] is Class<*>) it[0] as Class<*> else it[0].javaClass
                 return@BshMethod runCatching { clazz.methods.find { m -> m.name == it[1] as String } }.getOrNull()
             })
-            setMethod(BshMethod("firstMethod", arrayOf(Any::class.java, BString, int)) {
+            setMethod(BshMethod("firstMethod", arrayOf(any, BString, int)) {
                 val clazz = if (it[0] is Class<*>) it[0] as Class<*> else it[0].javaClass
                 return@BshMethod runCatching { clazz.methods.find { m -> m.name == it[1] as String && m.parameterCount == it[2] as Int } }.getOrNull()
             })
-            setMethod(BshMethod("firstConstructor", arrayOf(Any::class.java, int)) {
+            setMethod(BshMethod("firstConstructor", arrayOf(any, int)) {
                 val clazz = if (it[0] is Class<*>) it[0] as Class<*> else it[0].javaClass
                 return@BshMethod runCatching { clazz.constructors.find { c -> c.parameterCount == it[1] as Int } }.getOrNull()
             })
-            setMethod(BshMethod("firstField", arrayOf(Any::class.java, BString)) {
+            setMethod(BshMethod("firstField", arrayOf(any, BString)) {
                 val clazz = if (it[0] is Class<*>) it[0] as Class<*> else it[0].javaClass
                 return@BshMethod runCatching { clazz.getDeclaredField(it[1] as String).apply { isAccessible = true } }.getOrNull()
             })
 
             // === Reflection Accessors ===
-            setMethod(BshMethod("getField", arrayOf(Any::class.java, BString)) {
+            setMethod(BshMethod("getField", arrayOf(any, BString)) {
                 val obj = it[0]
                 val fieldName = it[1] as String
                 return@BshMethod if (obj is Class<*>) {
@@ -1685,7 +1685,7 @@ object JavaEngine {
                     obj.reflekt().getField(fieldName, true)
                 }
             })
-            setMethod(BshMethod("setField", arrayOf(Any::class.java, BString, Any::class.java)) {
+            setMethod(BshMethod("setField", arrayOf(any, BString, any)) {
                 val obj = it[0]
                 val fieldName = it[1] as String
                 val value = it[2]
@@ -1698,7 +1698,7 @@ object JavaEngine {
             })
 
             // === Reflection Execution ===
-            setMethod(BshMethod("invokeMethod", arrayOf(Any::class.java, BString)) {
+            setMethod(BshMethod("invokeMethod", arrayOf(any, BString)) {
                 val instance = it[0]
                 val methodName = it[1] as String
                 val clazz = instance as? Class<*> ?: instance.javaClass
@@ -1707,7 +1707,7 @@ object JavaEngine {
                 val target = if (instance is Class<*>) null else instance
                 return@BshMethod method.invoke(target)
             })
-            setMethod(BshMethod("invokeMethod", arrayOf(Any::class.java, BString, Array::class.java)) {
+            setMethod(BshMethod("invokeMethod", arrayOf(any, BString, Array::class.java)) {
                 val instance = it[0]
                 val methodName = it[1] as String
                 val params = it[2] as Array<*>
@@ -1717,7 +1717,7 @@ object JavaEngine {
                 val target = if (instance is Class<*>) null else instance
                 return@BshMethod method.invoke(target, *params)
             })
-            setMethod(BshMethod("invokeMethod", arrayOf(Any::class.java, BString, int)) {
+            setMethod(BshMethod("invokeMethod", arrayOf(any, BString, int)) {
                 val instance = it[0]
                 val methodName = it[1] as String
                 val paramCount = it[2] as Int
@@ -1727,7 +1727,7 @@ object JavaEngine {
                 val target = if (instance is Class<*>) null else instance
                 return@BshMethod method.invoke(target)
             })
-            setMethod(BshMethod("invokeMethod", arrayOf(Any::class.java, BString, int, Array::class.java)) {
+            setMethod(BshMethod("invokeMethod", arrayOf(any, BString, int, Array::class.java)) {
                 val instance = it[0]
                 val methodName = it[1] as String
                 val paramCount = it[2] as Int
@@ -1739,7 +1739,7 @@ object JavaEngine {
                 return@BshMethod method.invoke(target, *params)
             })
 
-            setMethod(BshMethod("createInstance", arrayOf(Any::class.java, int)) {
+            setMethod(BshMethod("createInstance", arrayOf(any, int)) {
                 val instance = it[0]
                 val paramCount = it[1] as Int
                 val clazz = instance as? Class<*> ?: instance.javaClass
@@ -1747,7 +1747,7 @@ object JavaEngine {
                 ctor.isAccessible = true
                 return@BshMethod ctor.newInstance()
             })
-            setMethod(BshMethod("createInstance", arrayOf(Any::class.java, int, Array::class.java)) {
+            setMethod(BshMethod("createInstance", arrayOf(any, int, Array::class.java)) {
                 val instance = it[0]
                 val paramCount = it[1] as Int
                 val params = it[2] as Array<*>
@@ -1826,7 +1826,7 @@ object JavaEngine {
                 WeNetSceneApi.sendNetScene(it[0])
                 return@BshMethod null
             })
-            setMethod(BshMethod("sendNetScene", arrayOf(Any::class.java)) {
+            setMethod(BshMethod("sendNetScene", arrayOf(any)) {
                 WeNetSceneApi.sendNetScene(it[0])
                 return@BshMethod null
             })
@@ -1854,7 +1854,7 @@ object JavaEngine {
                     jo.optString("scale", "0")
                 )
             })
-            setMethod(BshMethod("sendMediaMsg", arrayOf(BString, Any::class.java, BString)) {
+            setMethod(BshMethod("sendMediaMsg", arrayOf(BString, any, BString)) {
                 val toUser = it[0] as String
                 val mediaMsg = it[1]
                 val appId = it[2] as String

@@ -12,8 +12,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
-import dev.ujhhgtg.reflekt.utils.isStatic
-import dev.ujhhgtg.reflekt.utils.makeAccessible
+import dev.ujhhgtg.reflekt.reflekt
+import dev.ujhhgtg.reflekt.utils.Modifiers
 import dev.ujhhgtg.reflekt.utils.toClass
 import dev.ujhhgtg.wekit.dexkit.abc.IResolveDex
 import dev.ujhhgtg.wekit.dexkit.dsl.dexMethod
@@ -25,12 +25,9 @@ import dev.ujhhgtg.wekit.ui.content.Button
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.android.showToast
-import dev.ujhhgtg.wekit.utils.reflection.BBool
-import dev.ujhhgtg.wekit.utils.reflection.BFloat
-import dev.ujhhgtg.wekit.utils.reflection.BInt
-import java.lang.reflect.Field
-import java.lang.reflect.Method
-import java.lang.reflect.Modifier as ReflectModifier
+import dev.ujhhgtg.wekit.utils.reflection.bool
+import dev.ujhhgtg.wekit.utils.reflection.float
+import dev.ujhhgtg.wekit.utils.reflection.int
 
 @Feature(
     name = "DPI 修改", categories = ["界面美化", "系统与隐私"],
@@ -44,7 +41,7 @@ object CustomDpi : ClickableFeature(), IResolveDex {
                 usingEqStrings("MicroMsg.MMDensityManager", "screenResolution_target_field")
             }
 
-            modifiers = ReflectModifier.PUBLIC
+            modifiers = Modifiers.PUBLIC
             returnType = DisplayMetrics::class.java.name
             paramCount = 0
 
@@ -53,9 +50,6 @@ object CustomDpi : ClickableFeature(), IResolveDex {
             }
         }
     }
-
-    private var tabIconScaleField: Field? = null
-    private var tabIconInitMethod: Method? = null
 
     private var customDpi by prefOption("custom_dpi", 360)
 
@@ -112,21 +106,18 @@ object CustomDpi : ClickableFeature(), IResolveDex {
 
     private fun hookTabIconScale() {
         val tabIconView = "com.tencent.mm.ui.TabIconView".toClass()
-        val method = tabIconInitMethod ?: tabIconView.declaredMethods.firstOrNull {
-            it.parameterTypes.contentEquals(arrayOf(BInt, BInt, BInt, BBool))
-        }?.also {
-            tabIconInitMethod = it
-        } ?: return
+        val method = tabIconView.reflekt().firstMethod {
+            parameters(int, int, int, bool)
+        }
 
         method.hookBefore {
             val view = thisObject ?: return@hookBefore
-            val field = tabIconScaleField ?: view.javaClass.declaredFields.firstOrNull {
-                it.type == BFloat && !it.isStatic
-            }?.makeAccessible()?.also {
-                tabIconScaleField = it
-            } ?: return@hookBefore
+            val field = view.reflekt().firstField {
+                type = float
+                modifiers { !it.contains(Modifiers.STATIC) }
+            }
 
-            field.setFloat(view, customDpi * 1.1666666f / 400.0f)
+            field.set(customDpi * 1.1666666f / 400.0f)
         }
     }
 }

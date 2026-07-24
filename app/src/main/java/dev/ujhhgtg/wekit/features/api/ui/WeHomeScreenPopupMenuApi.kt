@@ -19,9 +19,9 @@ import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.runOnUiThread
 import dev.ujhhgtg.wekit.utils.hookBeforeDirectly
-import dev.ujhhgtg.wekit.utils.reflection.BBool
-import dev.ujhhgtg.wekit.utils.reflection.BInt
 import dev.ujhhgtg.wekit.utils.reflection.BString
+import dev.ujhhgtg.wekit.utils.reflection.bool
+import dev.ujhhgtg.wekit.utils.reflection.int
 import java.util.concurrent.CopyOnWriteArrayList
 
 @Feature(name = "首页菜单服务", categories = ["API"], description = "提供向首页右上角菜单添加菜单项的能力")
@@ -72,9 +72,9 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
         searchPackages("com.tencent.mm.ui")
         matcher {
             addFieldForType(BString)
-            addFieldForType(BInt)
-            addFieldForType(BInt)
-            addFieldForType(BInt)
+            addFieldForType(int)
+            addFieldForType(int)
+            addFieldForType(int)
             addFieldForType(BString)
             fieldCount(5)
             methods {
@@ -87,7 +87,7 @@ object WeHomeScreenPopupMenuApi : ApiFeature(), IResolveDex {
     private val classMenuItemWrapper by dexClass {
         searchPackages("com.tencent.mm.ui")
         matcher {
-            addFieldForType(BBool)
+            addFieldForType(bool)
             addFieldForType(classMenuItemData.clazz)
         }
     }

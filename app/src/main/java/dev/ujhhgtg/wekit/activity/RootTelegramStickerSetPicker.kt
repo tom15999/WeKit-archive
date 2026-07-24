@@ -43,7 +43,7 @@ import java.util.UUID
 
 internal data class RootTelegramInstance(
     val packageName: String,
-    val databasePath: String,
+    val databasePath: String? = null,
 )
 
 internal object RootTelegramStickerSetRepository {
@@ -143,11 +143,12 @@ internal object RootTelegramStickerSetRepository {
         applicationUid: Int,
         instance: RootTelegramInstance,
     ): Result<List<TelegramInstalledStickerSet>> = runCatching {
+        val databasePath = requireNotNull(instance.databasePath) { "Telegram 数据库路径不可用" }
         val sessionDir = File(cacheDir, "telegram-root-import-${UUID.randomUUID()}")
         require(sessionDir.mkdirs()) { "无法创建数据库临时目录" }
         try {
             val destination = File(sessionDir, "cache4.db")
-            copyDatabaseSnapshot(instance.databasePath, destination, applicationUid).getOrThrow()
+            copyDatabaseSnapshot(databasePath, destination, applicationUid).getOrThrow()
             TelegramStickerDatabase.readInstalledSets(destination.asPath).getOrThrow()
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
         } finally {
@@ -217,8 +218,8 @@ internal object RootTelegramStickerSetRepository {
 
 @Composable
 internal fun RootTelegramStickerSetPickerContent(
-    cacheDir: File,
-    applicationUid: Int,
+    discoverInstances: () -> Result<List<RootTelegramInstance>>,
+    readInstalledSets: (RootTelegramInstance) -> Result<List<TelegramInstalledStickerSet>>,
     onCancel: () -> Unit,
     onComplete: (List<TelegramInstalledStickerSet>) -> Unit,
 ) {
@@ -233,7 +234,7 @@ internal fun RootTelegramStickerSetPickerContent(
         error = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                RootTelegramStickerSetRepository.discoverInstances(applicationUid / 100000)
+                discoverInstances()
             }
             result.fold(
                 onSuccess = { discovered ->
@@ -264,11 +265,7 @@ internal fun RootTelegramStickerSetPickerContent(
                         error = null
                         scope.launch {
                             val result = withContext(Dispatchers.IO) {
-                                RootTelegramStickerSetRepository.readInstalledSets(
-                                    cacheDir,
-                                    applicationUid,
-                                    instance,
-                                )
+                                readInstalledSets(instance)
                             }
                             parsing = false
                             result.fold(

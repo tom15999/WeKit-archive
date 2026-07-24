@@ -112,6 +112,36 @@ object ZygiskEntry {
     @JvmStatic
     private external fun nativeInitialize(): Boolean
 
+    /**
+     * The native bootstrap creates this connection before app specialization,
+     * when Zygisk is still allowed to connect to its root companion.
+     */
+    internal fun hasTelegramRootCompanion(): Boolean = nativeHasTelegramRootCompanion()
+
+    internal fun listTelegramRootInstances(): List<String> = nativeListTelegramInstances().toList()
+
+    /** Bit 0 and bit 1 indicate that the source had a WAL and SHM sidecar. */
+    internal fun copyTelegramRootDatabaseSnapshot(
+        packageName: String,
+        databaseFd: Int,
+        walFd: Int,
+        shmFd: Int,
+    ): Int = nativeCopyTelegramDatabaseSnapshot(packageName, databaseFd, walFd, shmFd)
+
+    @JvmStatic
+    private external fun nativeHasTelegramRootCompanion(): Boolean
+
+    @JvmStatic
+    private external fun nativeListTelegramInstances(): Array<String>
+
+    @JvmStatic
+    private external fun nativeCopyTelegramDatabaseSnapshot(
+        packageName: String,
+        databaseFd: Int,
+        walFd: Int,
+        shmFd: Int,
+    ): Int
+
     private fun installFinalClassLoaderHook(
         bridge: ArtHookBridge,
         appComponentFactory: Any,

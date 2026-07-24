@@ -49,7 +49,7 @@ import dev.ujhhgtg.wekit.utils.HookParam
 import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.android.showToast
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
-import dev.ujhhgtg.wekit.utils.reflection.BInt
+import dev.ujhhgtg.wekit.utils.reflection.int
 import kotlin.io.path.div
 
 @Feature(
@@ -198,7 +198,7 @@ object VirtualVoipVideo : ClickableFeature(), IResolveDex {
 
             firstMethod {
                 name = "getCameraInfo"
-                parameters(BInt, Camera.CameraInfo::class)
+                parameters(int, Camera.CameraInfo::class)
             }.hookAfter {
                 if (!shouldInterceptCamera) return@hookAfter
                 val info = args[1] as? Camera.CameraInfo ?: return@hookAfter

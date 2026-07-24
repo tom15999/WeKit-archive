@@ -43,6 +43,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -96,6 +97,7 @@ import com.composables.icons.materialsymbols.outlined.Travel_explore
 import com.composables.icons.materialsymbols.outlined.Upload
 import com.composables.icons.materialsymbols.outlined.Upload_file
 import dev.ujhhgtg.wekit.features.items.chat.panel.LocalSortMode
+import dev.ujhhgtg.wekit.features.items.chat.panel.PanelPaths
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSettings
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelSource
 import dev.ujhhgtg.wekit.features.items.chat.panel.PanelUiState
@@ -110,6 +112,9 @@ import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImport
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportProgress
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerImportResult
 import dev.ujhhgtg.wekit.features.items.chat.panel.sticker.TelegramStickerPackRepository
+import dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskLoaderService
+import dev.ujhhgtg.wekit.loader.entry.zygisk.ZygiskTelegramRootClient
+import dev.ujhhgtg.wekit.loader.startup.StartupInfo
 import dev.ujhhgtg.wekit.ui.content.GlobalImageLoader
 import dev.ujhhgtg.wekit.ui.utils.TelegramIcon
 import dev.ujhhgtg.wekit.utils.android.showToastSuspend
@@ -290,6 +295,7 @@ private fun StickerPanelContent(
     var telegramDiscoveredSets by remember { mutableStateOf<List<TelegramInstalledStickerSet>?>(null) }
     var selectedTelegramSetNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var telegramDiscoveryLoading by remember { mutableStateOf(false) }
+    var zygiskInstancePickerVisible by remember { mutableStateOf(false) }
     var telegramProgress by remember { mutableStateOf<TelegramStickerImportProgress?>(null) }
     var telegramBatchProgress by remember { mutableStateOf<TelegramBatchImportProgress?>(null) }
     var telegramImportJob by remember { mutableStateOf<Job?>(null) }
@@ -594,9 +600,9 @@ private fun StickerPanelContent(
     }
     val selectedOnlinePack = onlinePacks.firstOrNull { it.id == selectedOnlinePackId }
     val onlineItems = (onlineItemsState as? PanelUiState.Content)?.value.orEmpty()
-    val multiSelectItems = when {
-        destination == StickerDestination.PACKS && localDetailPack != null -> localDetailPack.items
-        destination == StickerDestination.ONLINE && selectedOnlinePack != null -> onlineItems
+    val multiSelectItems = when (destination) {
+        StickerDestination.PACKS if localDetailPack != null -> localDetailPack.items
+        StickerDestination.ONLINE if selectedOnlinePack != null -> onlineItems
         else -> emptyList()
     }
     val deletingLocalItems = destination == StickerDestination.PACKS && localDetailPack != null
@@ -815,54 +821,58 @@ private fun StickerPanelContent(
             )
         }
 
-        StickerDestination.ONLINE -> if (selectedOnlinePack == null && !showingMyUploads) {
-            listOf(
-                PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::loadOnlinePacks),
-                PanelAction(MaterialSymbols.Outlined.Person, "我的上传") {
-                    showingMyUploads = true
-                    selectedOnlinePackId = null
-                    loadMyUploads()
-                },
-                PanelAction(
-                    icon = MaterialSymbols.Outlined.Sort,
-                    label = when (onlineSortMode) {
-                        1 -> "上传时间"
-                        2 -> "下载次数"
-                        else -> "默认"
+        StickerDestination.ONLINE -> when (selectedOnlinePack) {
+            null if !showingMyUploads -> {
+                listOf(
+                    PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::loadOnlinePacks),
+                    PanelAction(MaterialSymbols.Outlined.Person, "我的上传") {
+                        showingMyUploads = true
+                        selectedOnlinePackId = null
+                        loadMyUploads()
                     },
-                    showLabel = true,
-                ) {
-                    onlineSortMode = (onlineSortMode + 1) % 3
-                    PanelSettings.onlineStickerSortMode = onlineSortMode
-                },
-            )
-        } else if (selectedOnlinePack == null) {
-            listOf(
-                PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") {
-                    showingMyUploads = false
-                    myUploadsRequest++
-                    if (onlinePacksState == PanelUiState.Loading) loadOnlinePacks()
-                },
-                PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::loadMyUploads),
-            )
-        } else {
-            listOf(
-                PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") {
-                    selectedOnlinePackId = null
-                    onlineItemsRequest++
-                    onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
-                },
-                PanelAction(MaterialSymbols.Outlined.Refresh, "刷新") {
-                    loadOnlinePack(selectedOnlinePack)
-                },
-                PanelAction(MaterialSymbols.Outlined.Select_all, "多选", onlineItems.isNotEmpty()) {
-                    multiSelectMode = true
-                    selectedStickerKeys = emptySet()
-                },
-                PanelAction(MaterialSymbols.Outlined.Save, "保存", onlineItems.isNotEmpty()) {
-                    saveWholeOnlinePack(selectedOnlinePack, onlineItems)
-                },
-            )
+                    PanelAction(
+                        icon = MaterialSymbols.Outlined.Sort,
+                        label = when (onlineSortMode) {
+                            1 -> "上传时间"
+                            2 -> "下载次数"
+                            else -> "默认"
+                        },
+                        showLabel = true,
+                    ) {
+                        onlineSortMode = (onlineSortMode + 1) % 3
+                        PanelSettings.onlineStickerSortMode = onlineSortMode
+                    },
+                )
+            }
+            null -> {
+                listOf(
+                    PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") {
+                        showingMyUploads = false
+                        myUploadsRequest++
+                        if (onlinePacksState == PanelUiState.Loading) loadOnlinePacks()
+                    },
+                    PanelAction(MaterialSymbols.Outlined.Refresh, "刷新", onClick = ::loadMyUploads),
+                )
+            }
+            else -> {
+                listOf(
+                    PanelAction(MaterialSymbols.Outlined.Arrow_back, "返回") {
+                        selectedOnlinePackId = null
+                        onlineItemsRequest++
+                        onlineItemsState = PanelUiState.Empty("选择一个在线表情包")
+                    },
+                    PanelAction(MaterialSymbols.Outlined.Refresh, "刷新") {
+                        loadOnlinePack(selectedOnlinePack)
+                    },
+                    PanelAction(MaterialSymbols.Outlined.Select_all, "多选", onlineItems.isNotEmpty()) {
+                        multiSelectMode = true
+                        selectedStickerKeys = emptySet()
+                    },
+                    PanelAction(MaterialSymbols.Outlined.Save, "保存", onlineItems.isNotEmpty()) {
+                        saveWholeOnlinePack(selectedOnlinePack, onlineItems)
+                    },
+                )
+            }
         }
 
         else -> emptyList()
@@ -1435,33 +1445,157 @@ private fun StickerPanelContent(
             onDismiss = { telegramSourcePrompt = false },
             onSelect = { source ->
                 telegramSourcePrompt = false
+                if (source == TelegramDatabaseSource.ROOT &&
+                    StartupInfo.loaderService is ZygiskLoaderService
+                ) {
+                    zygiskInstancePickerVisible = true
+                    return@TelegramDatabaseSourcePrompt
+                }
                 telegramDiscoveryLoading = true
                 actions.pickTelegramStickerSets(source) { result ->
-                    telegramDiscoveryLoading = false
-                    if (result == null) return@pickTelegramStickerSets
+                    if (result == null) {
+                        telegramDiscoveryLoading = false
+                        return@pickTelegramStickerSets
+                    }
                     result.fold(
                         onSuccess = { sets ->
                             scope.launch {
-                                val importedNames = withContext(Dispatchers.IO) {
-                                    actions.loadImportedTelegramStickerSetNames()
-                                }
-                                val uniqueSets = sets.distinctBy { it.name.lowercase() }
-                                if (uniqueSets.isEmpty()) {
-                                    operationMessage = "所选数据库中没有可导入的 Telegram 表情包"
-                                } else {
-                                    selectedTelegramSetNames = uniqueSets
-                                        .mapNotNullTo(linkedSetOf()) { set ->
-                                            set.name.takeUnless { it.lowercase() in importedNames }
-                                        }
-                                    telegramDiscoveredSets = uniqueSets
+                                try {
+                                    val importedNames = withContext(Dispatchers.IO) {
+                                        actions.loadImportedTelegramStickerSetNames()
+                                    }
+                                    val uniqueSets = sets.distinctBy { it.name.lowercase() }
+                                    if (uniqueSets.isEmpty()) {
+                                        operationMessage = "所选数据库中没有可导入的 Telegram 表情包"
+                                    } else {
+                                        selectedTelegramSetNames = uniqueSets
+                                            .mapNotNullTo(linkedSetOf()) { set ->
+                                                set.name.takeUnless { it.lowercase() in importedNames }
+                                            }
+                                        telegramDiscoveredSets = uniqueSets
+                                    }
+                                } finally {
+                                    telegramDiscoveryLoading = false
                                 }
                             }
                         },
-                        onFailure = { operationMessage = it.message ?: "读取 Telegram 数据库失败" },
+                        onFailure = {
+                            telegramDiscoveryLoading = false
+                            operationMessage = it.message ?: "读取 Telegram 数据库失败"
+                        },
                     )
                 }
             },
         )
+
+        if (zygiskInstancePickerVisible) {
+            var instances by remember { mutableStateOf<List<String>?>(null) }
+            var selectedPackage by remember { mutableStateOf<String?>(null) }
+            var discoveryError by remember { mutableStateOf<String?>(null) }
+            var reading by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                val result = withContext(Dispatchers.IO) {
+                    ZygiskTelegramRootClient.discoverInstances()
+                }
+                result.fold(
+                    onSuccess = { pkgs ->
+                        instances = pkgs
+                        selectedPackage = pkgs.singleOrNull()
+                    },
+                    onFailure = { discoveryError = it.message ?: "扫描 Telegram 实例失败" },
+                )
+            }
+            PanelFullOverlay(
+                onDismiss = { if (!reading) zygiskInstancePickerVisible = false },
+                allowImplicitDismiss = !reading,
+            ) {
+                Text("选择 Telegram 实例", style = MaterialTheme.typography.titleMedium)
+                when {
+                    discoveryError != null -> Text(
+                        requireNotNull(discoveryError),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    instances == null -> CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(top = 8.dp),
+                    )
+                    else -> Column(modifier = Modifier.padding(top = 4.dp)) {
+                        requireNotNull(instances).forEach { pkg ->
+                            ListItem(
+                                modifier = Modifier.clickable { selectedPackage = pkg },
+                                headlineContent = { Text(pkg) },
+                                leadingContent = {
+                                    RadioButton(
+                                        selected = selectedPackage == pkg,
+                                        onClick = { selectedPackage = pkg },
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                if (reading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { zygiskInstancePickerVisible = false },
+                        enabled = !reading,
+                    ) { Text("取消") }
+                    TextButton(
+                        onClick = {
+                            val pkg = selectedPackage ?: return@TextButton
+                            reading = true
+                            scope.launch {
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        ZygiskTelegramRootClient.readInstalledSets(
+                                            cacheDir = PanelPaths.panelCacheDir.toFile(),
+                                            packageName = pkg,
+                                        ).getOrThrow()
+                                    }
+                                }
+                                reading = false
+                                zygiskInstancePickerVisible = false
+                                result.fold(
+                                    onSuccess = { sets ->
+                                        telegramDiscoveryLoading = true
+                                        scope.launch {
+                                            try {
+                                                val importedNames = withContext(Dispatchers.IO) {
+                                                    actions.loadImportedTelegramStickerSetNames()
+                                                }
+                                                val uniqueSets = sets.distinctBy { it.name.lowercase() }
+                                                if (uniqueSets.isEmpty()) {
+                                                    operationMessage = "所选数据库中没有可导入的 Telegram 表情包"
+                                                } else {
+                                                    selectedTelegramSetNames = uniqueSets
+                                                        .mapNotNullTo(linkedSetOf()) { set ->
+                                                            set.name.takeUnless { it.lowercase() in importedNames }
+                                                        }
+                                                    telegramDiscoveredSets = uniqueSets
+                                                }
+                                            } finally {
+                                                telegramDiscoveryLoading = false
+                                            }
+                                        }
+                                    },
+                                    onFailure = {
+                                        operationMessage = it.message ?: "读取 Telegram 数据库失败"
+                                    },
+                                )
+                            }
+                        },
+                        enabled = selectedPackage != null && instances != null && !reading,
+                    ) { Text("确定") }
+                }
+            }
+        }
 
         telegramDiscoveredSets?.let { sets ->
             TelegramStickerSetSelectionPrompt(

@@ -127,8 +127,18 @@ class MainActivity : ComponentActivity() {
             setContent {
                 ModuleTheme {
                     RootTelegramStickerSetPickerContent(
-                        cacheDir = cacheDir,
-                        applicationUid = applicationInfo.uid,
+                        discoverInstances = {
+                            RootTelegramStickerSetRepository.discoverInstances(
+                                applicationInfo.uid / 100000,
+                            )
+                        },
+                        readInstalledSets = { instance ->
+                            RootTelegramStickerSetRepository.readInstalledSets(
+                                cacheDir,
+                                applicationInfo.uid,
+                                instance,
+                            )
+                        },
                         onCancel = {
                             setResult(RESULT_CANCELED)
                             finish()

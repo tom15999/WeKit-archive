@@ -23,8 +23,8 @@ import dev.ujhhgtg.wekit.ui.content.DefaultColumn
 import dev.ujhhgtg.wekit.ui.content.TextButton
 import dev.ujhhgtg.wekit.ui.utils.showComposeDialog
 import dev.ujhhgtg.wekit.utils.fs.asPath
-import dev.ujhhgtg.wekit.utils.reflection.BBool
 import dev.ujhhgtg.wekit.utils.reflection.BString
+import dev.ujhhgtg.wekit.utils.reflection.bool
 import kotlin.io.path.copyTo
 
 @Feature(
@@ -64,7 +64,7 @@ object NoCompressUploadedImages : ClickableFeature(), IResolveDex {
     private val vfsGetCachePathMethod by lazy {
         WeMomentsApi.classVfs.reflekt().firstMethod {
             modifiers(Modifiers.STATIC)
-            parameters(BString, BBool)
+            parameters(BString, bool)
             returnType = BString
         }
     }

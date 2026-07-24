@@ -41,8 +41,6 @@ import dev.ujhhgtg.wekit.utils.WeLogger
 import dev.ujhhgtg.wekit.utils.collections.emptyHashSet
 import dev.ujhhgtg.wekit.utils.fs.KnownPaths
 import dev.ujhhgtg.wekit.utils.fs.asPath
-import dev.ujhhgtg.wekit.utils.reflection.BBool
-import dev.ujhhgtg.wekit.utils.reflection.BInt
 import dev.ujhhgtg.wekit.utils.reflection.BString
 import dev.ujhhgtg.wekit.utils.reflection.bool
 import dev.ujhhgtg.wekit.utils.reflection.int
@@ -1309,9 +1307,9 @@ object WeMessageApi : ApiFeature(), IResolveDex {
             val target = classVoiceLogic.clazz.reflekt()
                 .firstMethod {
                     parameters {
-                        it[0] == BString && it[1] == BInt && it[2] == BInt
+                        it[0] == BString && it[1] == int && it[2] == int
                     }
-                    returnType = BBool
+                    returnType = bool
                 }.self
             if (target.parameterCount == 4) {
                 target.invoke(null, partialPath, actualDuration, 0, null)
